@@ -9,3 +9,5 @@ dist/
 # Never commit client revenue payloads or API keys.
 scratch/
 *.payload.json
+
+.vercel

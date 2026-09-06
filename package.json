@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "test": "node scripts/classify-tests.mjs",
     "verify:live": "node scripts/verify-live.mjs",
-    "keycheck": "node scripts/key-check.mjs"
+    "keycheck": "node scripts/key-check.mjs",
+    "audit:bundle": "node scripts/bundle-audit.mjs",
+    "check:rls": "node scripts/rls-check.mjs",
+    "sync": "node scripts/sync.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
