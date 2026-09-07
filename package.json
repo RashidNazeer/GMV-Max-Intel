@@ -17,7 +17,8 @@
     "sync:context": "node scripts/sync-context.mjs",
     "demo:spend": "node scripts/demo-spend.mjs",
     "demo:purge": "node scripts/demo-spend.mjs --purge",
-    "check:attribution": "node scripts/check-attribution.mjs"
+    "check:attribution": "node scripts/check-attribution.mjs",
+    "sync:gmvmax": "node scripts/sync-gmvmax.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
