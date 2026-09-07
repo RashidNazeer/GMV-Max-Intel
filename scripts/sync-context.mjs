@@ -12,7 +12,7 @@ import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
 import {
   normalizeDailyChannels, normalizeVideo,
-  normalizeProductCatalog, normalizeProductWindow,
+  normalizeProductCatalog, normalizeProductDay,
 } from '../src/lib/reacher/normalize.js';
 
 const [SUPABASE_URL, SERVICE_KEY, REACHER_API] =
@@ -108,14 +108,37 @@ for (const shop of shops) {
     };
   });
 
-  // ── Layer 4b: the Seller Center funnel ────────────────────────────────────
+  // ── Layer 4b: the Seller Center funnel, ONE DAY AT A TIME ─────────────────
+  // Window-scoped rows only ever answer the exact window they were fetched for.
+  // The app asks for 7, 14, 30, 60 and 90-day ranges, and a stored 30-day row
+  // matches none of them — which is how "Last 90 days" ended up rendering a
+  // live shop as $0 (migration 011).
+  //
+  // Verified additive against the live API before restructuring: 2026-08-20
+  // alone returns $3,538.60 and 08-20→08-22 returns $9,092.98.
+  //
+  // One call per day per shop, throttled at ~1.1s, so a 30-day sync is about
+  // 35 seconds a shop. Slower than one window call, and the only version that
+  // answers a question nobody asked in advance.
   await layer(shop, 'product_metrics', async () => {
-    const products = await reacher.fetchSellerCenterProducts({
-      shopId: shop.reacher_shop_id, startDate: START, endDate: END, want: 200,
-    });
-    const rows = products.map((p) => normalizeProductWindow(p, shop.id, START, END));
-    const written = await upsert('product_window_metrics', rows, 'shop_id,product_id,window_start,window_end');
-    return { received: products.length, written };
+    const days = [];
+    for (let d = new Date(START + 'T00:00:00Z'); d <= new Date(END + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+      days.push(d.toISOString().slice(0, 10));
+    }
+    let received = 0, written = 0, blank = 0;
+    for (const day of days) {
+      const products = await reacher.fetchSellerCenterProducts({
+        shopId: shop.reacher_shop_id, startDate: day, endDate: day, want: 200,
+      });
+      received += products.length;
+      if (!products.length) { blank++; continue; }
+      const rows = products.map((p) => normalizeProductDay(p, shop.id, day));
+      written += await upsert('product_daily_metrics', rows, 'shop_id,day,product_id');
+    }
+    return {
+      received, written,
+      note: `${days.length} days${blank ? `, ${blank} with no products` : ''}`,
+    };
   });
 
   await db.from('shops').update({ last_synced_at: new Date().toISOString() }).eq('id', shop.id);

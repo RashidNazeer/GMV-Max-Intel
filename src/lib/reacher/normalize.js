@@ -191,25 +191,24 @@ export function normalizeProductCatalog(p, shopId) {
   };
 }
 
-// ── Layer 4 — the Seller Center funnel for one product over one window. ──────
-export function normalizeProductWindow(p, shopId, windowStart, windowEnd) {
+// ── Layer 4 — the Seller Center funnel for one product on ONE DAY. ──────────
+// Stored daily because window-scoped rows only answer the exact window they
+// were fetched for; daily rows aggregate to any range (migration 011).
+export function normalizeProductDay(p, shopId, day) {
   const s = p.sales || {}, f = p.funnel || {}, c = p.channels || {};
   return {
     shop_id: shopId,
+    day,
     product_id: str(p.product_id),
-    window_start: windowStart,
-    window_end: windowEnd,
 
     product_name: str(p.product_name),
     cover_image_url: str(p.cover_image_url),
-    days_with_data: num(p.days_with_data),
 
     gmv: num(s.gmv),
     orders: num(s.orders),
     sku_orders: num(s.sku_orders),
     items_sold: num(s.items_sold),
     customers: num(s.customers),
-    aov: num(s.aov),
     refunds: num(s.refunds),
     items_returned: num(s.items_canceled_and_returned),
 
@@ -217,10 +216,11 @@ export function normalizeProductWindow(p, shopId, windowStart, windowEnd) {
     unique_viewers: num(f.unique_viewers),
     clicks: num(f.clicks),
     unique_clickers: num(f.unique_clickers),
-    ctr: num(f.ctr),
     add_to_cart: num(f.add_to_cart),
-    add_to_cart_rate: num(f.add_to_cart_rate),
-    click_to_order_rate: num(f.click_to_order_rate),
+    // The funnel reports its own order count, and it differs from sales.orders
+    // (3,417 vs 3,393 on a live product). Click-to-order is built from the
+    // funnel's, so both are stored rather than one being assumed for the other.
+    funnel_orders: num(f.orders),
 
     seller_video_gmv: num(c.seller?.video_gmv),
     seller_live_gmv: num(c.seller?.live_gmv),

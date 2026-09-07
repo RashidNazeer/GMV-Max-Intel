@@ -36,10 +36,26 @@ export default function ProductsPage({ shop, start, end }) {
   const totalImpr = rows.reduce((a, r) => a + (Number(r.impressions) || 0), 0);
   const anyDiscount = rows.some((r) => r.discount_pct != null);
 
+  // Rows can arrive from the affiliate side alone, with no Seller Center funnel
+  // behind them. That used to render as "2 products with sales · $0 · 0
+  // impressions", which reads as a shop that sold nothing rather than a window
+  // we have no funnel data for. Absence has to look like absence.
+  const withFunnel = rows.filter((r) => r.days_with_data != null).length;
+  if (!q.isLoading && withFunnel === 0) {
+    return (
+      <Empty title="No product data stored for this window">
+        {rows.length} product{rows.length === 1 ? '' : 's'} had affiliate orders between {start} and {end},
+        but the Seller Center funnel has not been synced for these dates — so impressions, conversion and
+        refunds are unknown rather than zero. Run <code>npm run sync:context {start} {end}</code>, or pick a
+        range that has been synced.
+      </Empty>
+    );
+  }
+
   return (
     <div className="grid" style={{ gap: 16 }}>
       <div className="grid g4">
-        <Stat k="Products with sales" basis="measured" v={rows.length} sub={money(totalGmv, cur)} />
+        <Stat k="Products with sales" basis="measured" v={withFunnel} sub={money(totalGmv, cur)} />
         <Stat k="Impressions → clicks" basis="measured" v={rate(totalImpr ? totalClicks / totalImpr : null)}
           sub={`${Number(totalImpr).toLocaleString()} impressions`} />
         <Stat k="Median click → order" basis="measured" v={rate(median)}
@@ -47,6 +63,14 @@ export default function ProductsPage({ shop, start, end }) {
         <Stat k="Refunded" basis="measured" tone={totalGmv && totalRefunds / totalGmv >= 0.06 ? 'danger' : undefined}
           v={money(totalRefunds, cur)} sub={`${rate(totalGmv ? totalRefunds / totalGmv : null, 1)} of product GMV`} />
       </div>
+
+      {withFunnel < rows.length && (
+        <Note tone="info">
+          {rows.length - withFunnel} of {rows.length} products had affiliate orders but no Seller Center
+          funnel data in this window. They appear below with their ad share only — the funnel columns are
+          unknown, not zero.
+        </Note>
+      )}
 
       {!anyDiscount && (
         <Note tone="info">

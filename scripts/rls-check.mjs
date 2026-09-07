@@ -26,7 +26,7 @@ const newAnon = () => createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON
 // table nobody proved was protected.
 const REVENUE_TABLES = [
   'affiliate_order_lines', 'shops', 'shop_daily_channels', 'video_performance',
-  'product_catalog', 'product_window_metrics',
+  'product_catalog', 'product_daily_metrics',
   'gmv_max_campaigns', 'gmv_max_daily_metrics', 'gmv_max_settings_changes',
 ];
 
@@ -129,7 +129,7 @@ if (!pw) {
       shop_daily_channels: { shop_id: shopId, day: '2001-01-01', gmv: 999999 },
       video_performance: { shop_id: shopId, video_id: 'rls-probe', window_start: '2001-01-01', window_end: '2001-01-02', video_gmv: 999999 },
       product_catalog: { shop_id: shopId, product_id: 'rls-probe', title: 'probe' },
-      product_window_metrics: { shop_id: shopId, product_id: 'rls-probe', window_start: '2001-01-01', window_end: '2001-01-02', gmv: 999999 },
+      product_daily_metrics: { shop_id: shopId, day: '2001-01-01', product_id: 'rls-probe', gmv: 999999 },
       gmv_max_campaigns: { shop_id: shopId, campaign_id: 'rls-probe', data_source: 'reacher' },
       gmv_max_daily_metrics: { shop_id: shopId, campaign_id: 'rls-probe', day: '2001-01-01', spend: 999999, data_source: 'reacher' },
     };
