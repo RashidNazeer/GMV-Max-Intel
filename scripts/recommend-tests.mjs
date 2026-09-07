@@ -280,6 +280,58 @@ console.log('\n── what is working (strengths) ──');
     recommend(base).some((r) => wIds(base).includes(r.id)), false);
 }
 
+
+console.log('\n── marginal return (layer 5) ──');
+{
+  const okFit = {
+    status: 'ok', days: 29, total_spend: 9504, avg_roas: 1.46,
+    elasticity: 1.05, marginal_roas: 1.54, marginal_roas_ci: [1.20, 1.88],
+    r2: 0.80, spend_cv: 0.325, time_confounded: true, spend_time_correlation: -0.67,
+    naive_elasticity: 0.89,
+  };
+  const f = { ...base, roas: { ...base.roas, is_simulated: false }, marginal: okFit };
+  const r = get(f, 'marginal-return');
+  check('an answerable fit produces a finding', !!r, true);
+  check('a fitted curve is MODELLED, never measured', r.basis, BASIS.MODELLED);
+  check('marginal >= 90% of average -> room to scale', /return about what current spend does/.test(r.title), true);
+  check('the action names the marginal figure, not the average', /1\.54/.test(r.action), true);
+  check('the confound is disclosed in the evidence',
+    r.evidence.some((e) => /entangled/.test(e)), true);
+
+  // Diminishing returns: the case that should stop someone scaling.
+  const dim = { ...okFit, elasticity: 0.55, marginal_roas: 0.80, marginal_roas_ci: [0.6, 1.0], time_confounded: false };
+  const d = get({ ...base, marginal: dim }, 'marginal-return');
+  check('marginal well below average -> different headline', /less than the average/.test(d.title), true);
+  check('warns that the average can look fine while the increment loses',
+    /break-even/.test(d.action), true);
+  check('no confound -> says so', d.evidence.some((e) => /not confounded/.test(e)), true);
+
+  // Simulated spend must never dress a model up as measured.
+  const sim = { ...base, roas: { is_simulated: true }, marginal: okFit };
+  check('simulated spend -> simulated basis', get(sim, 'marginal-return').basis, BASIS.SIMULATED);
+}
+
+console.log('\n── marginal return: the refusals reach the user ──');
+{
+  const flat = {
+    status: 'flat_spend', days: 30, total_spend: 9000, spend_cv: 0.04,
+    reason: 'Spend barely varied — 4% variation against the 15% needed.',
+  };
+  const r = get({ ...base, marginal: flat }, 'marginal-return');
+  check('a refusal still produces a finding', !!r, true);
+  check('the refusal reason is shown verbatim', r.finding, flat.reason);
+  check('and tells them how to make it answerable', /Vary the daily budget/.test(r.action), true);
+  check('a refusal is never presented as a number', r.title.includes('Cannot yet say'), true);
+
+  const thin = { status: 'too_few_days', days: 9, total_spend: 2000, spend_cv: 0.3, reason: 'Only 9 days with spend.' };
+  check('too few days -> keep collecting', /Keep collecting/.test(get({ ...base, marginal: thin }, 'marginal-return').action), true);
+
+  // No spend at all is not a refusal worth reporting — it is just absence.
+  const none = { status: 'no_data', days: 0, total_spend: 0, reason: 'No days with both spend and revenue.' };
+  check('no spend at all -> SILENT', has({ ...base, marginal: none }, 'marginal-return'), false);
+  check('no marginal fact at all -> SILENT', has(base, 'marginal-return'), false);
+}
+
 console.log(`
 ${pass} passed, ${failures.length} failed`);
 if (failures.length) { console.log("FAILED: " + failures.join(", ")); process.exit(1); }

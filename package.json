@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "node scripts/preview.mjs",
-    "test": "node scripts/classify-tests.mjs && node scripts/recommend-tests.mjs",
+    "test": "node scripts/classify-tests.mjs && node scripts/recommend-tests.mjs && node scripts/marginal-tests.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "keycheck": "node scripts/key-check.mjs",
     "audit:bundle": "node scripts/bundle-audit.mjs",

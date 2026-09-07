@@ -10,8 +10,9 @@ import {
 } from 'recharts';
 import {
   shopAttribution, shopChannelDaily, shopCreativeHealth, shopTopVideos,
-  shopProducts, shopPaidRoas, topCreators,
+  shopProducts, shopPaidRoas, topCreators, shopSpendDaily,
 } from '../lib/api.js';
+import { fitSpendResponse } from '../lib/marginal.js';
 import Decisions from '../components/Decisions.jsx';
 import { Card, Stat, Note, Skeleton, Empty, Basis, MiniBar, money, moneyExact, pct } from '../components/ui.jsx';
 
@@ -26,6 +27,7 @@ export default function OverviewPage({ shop, start, end, days, onOpenTab }) {
   const productsQ = q('prods',    () => shopProducts(shop.id, start, end, 50));
   const roasQ     = q('roas',     () => shopPaidRoas(shop.id, start, end));
   const creatorsQ = q('creators', () => topCreators(shop.id, start, end, 12));
+  const spendQ    = q('spendd',   () => shopSpendDaily(shop.id, start, end));
 
   const a = attrQ.data;
   const loading = attrQ.isLoading || creativeQ.isLoading;
@@ -37,6 +39,13 @@ export default function OverviewPage({ shop, start, end, days, onOpenTab }) {
     videos: videosQ.data || [],
     products: productsQ.data || [],
     roas: roasQ.data,
+    // Layer 5 is fitted here rather than inside the rules module, which stays
+    // pure and import-free. The rule reports the REFUSAL as well as an answer,
+    // so an unanswerable curve still tells the reader something useful —
+    // silence would just look like the feature is missing.
+    marginal: spendQ.data?.length
+      ? fitSpendResponse(spendQ.data.map((d) => ({ spend: d.spend, revenue: d.reported_revenue })))
+      : null,
   };
 
   if (attrQ.error) return <Note tone="warn">Could not load: {attrQ.error.message}</Note>;

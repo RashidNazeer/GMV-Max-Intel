@@ -473,3 +473,74 @@ export function whatsWorking(f = {}) {
   }
   return out.sort((a, b) => (b.at_stake ?? 0) - (a.at_stake ?? 0));
 }
+
+// ============================================================
+// Layer 5 in the decision panel.
+//
+// The card on the Campaigns tab shows the curve. This turns it into an
+// instruction, which is the only reason the curve was fitted.
+//
+// The fit is computed elsewhere and passed in as f.marginal, because this
+// module stays pure and free of imports. When the model refused, `marginal`
+// carries a status other than 'ok' and this rule reports the REFUSAL rather
+// than staying silent — "we cannot answer this yet, and here is what would make
+// it answerable" is useful, where silence just looks like the feature is
+// missing.
+// ============================================================
+const marginalReturn = (f) => {
+  const mg = f.marginal; if (!mg) return null;
+  const cur = f.shop?.currency || 'USD';
+  const simulated = f.roas?.is_simulated === true;
+
+  // Not answerable yet: say so, and say what would change it.
+  if (mg.status && mg.status !== 'ok') {
+    // Only worth raising once there is spend to talk about.
+    if (!n(mg.total_spend)) return null;
+    return {
+      severity: SEVERITY.INFO,
+      basis: simulated ? BASIS.SIMULATED : BASIS.MEASURED,
+      at_stake: 0,
+      title: `Cannot yet say what more spend would return`,
+      finding: mg.reason,
+      action: mg.status === 'flat_spend'
+        ? `Vary the daily budget deliberately for two to three weeks — some days higher, some lower. That is what creates the evidence; a steady budget can never produce it, however long you wait.`
+        : `Keep collecting. This answers itself as the history builds, and until it does the honest answer is that we do not know.`,
+      evidence: [
+        `${mg.days} days with spend`,
+        mg.spend_cv != null ? `budget varied ${pct(mg.spend_cv, 0)} day to day` : 'spend variation unknown',
+        mg.total_spend ? `${money(mg.total_spend, cur)} spent` : 'no spend',
+      ],
+    };
+  }
+
+  const m = n(mg.marginal_roas), avg = n(mg.avg_roas);
+  if (m == null || avg == null) return null;
+  const ci = Array.isArray(mg.marginal_roas_ci) ? mg.marginal_roas_ci : [];
+  const lo = n(ci[0]), hi = n(ci[1]);
+  const gap = avg > 0 ? (avg - m) / avg : null;
+
+  // The interesting cases are: the next dollar is much worse than the average
+  // (stop scaling), or it is essentially as good (room to scale).
+  const scaling = m >= avg * 0.9;
+  return {
+    severity: SEVERITY.INFO,
+    basis: simulated ? BASIS.SIMULATED : BASIS.MODELLED,
+    at_stake: n(mg.total_spend) ?? 0,
+    title: scaling
+      ? `More spend should return about what current spend does`
+      : `The next dollar returns ${pct(gap)} less than the average`,
+    finding: scaling
+      ? `Across ${mg.days} days, revenue rose roughly in step with spend (elasticity ${Number(mg.elasticity).toFixed(2)}). The next dollar looks worth about ${m.toFixed(2)} against an average of ${avg.toFixed(2)}, so this budget is not yet in diminishing returns — there is room before extra spend starts costing more than it brings.`
+      : `Average ROAS is ${avg.toFixed(2)}, but the next dollar is worth about ${m.toFixed(2)}. Ad delivery reaches the easiest buyers first; past that point each extra dollar buys a harder sale. The campaign can look healthy on average while the money you are adding to it does not.`,
+    action: scaling
+      ? `If the return itself is acceptable, this budget can be raised. Judge that against ${m.toFixed(2)}, not the average — and re-check once spend has moved, because the curve shifts.`
+      : `Judge any budget increase against ${m.toFixed(2)}. If break-even sits above that, the increase loses money even while the campaign still averages ${avg.toFixed(2)}.`,
+    evidence: [
+      `elasticity ${Number(mg.elasticity).toFixed(2)}${lo != null && hi != null ? ` · marginal ${lo.toFixed(2)}–${hi.toFixed(2)}` : ''}`,
+      `${mg.days} days, ${money(mg.total_spend, cur)} spend, R² ${Number(mg.r2).toFixed(2)}`,
+      mg.time_confounded ? 'spend and time are entangled — treat as indicative' : 'not confounded with a time trend',
+    ],
+  };
+};
+marginalReturn.ruleId = 'marginal-return';
+RULES.push(marginalReturn);

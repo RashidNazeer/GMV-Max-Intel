@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { listCampaigns, listSettingsChanges, shopPaidRoas, shopSpendDaily } from '../lib/api.js';
 import { Card, Stat, Note, Skeleton, Empty, Basis, money, moneyExact, pct } from '../components/ui.jsx';
+import { fitSpendResponse, isAnswerable } from '../lib/marginal.js';
 
 export default function CampaignsPage({ shop, start, end }) {
   const cur = shop.currency || 'USD';
@@ -152,17 +153,130 @@ export default function CampaignsPage({ shop, start, end }) {
         )}
       </Card>
 
-      <Note tone="info">
-        <div>
-          <strong>Marginal ROAS is not on this page yet.</strong>
-          <div style={{ marginTop: 4 }}>
-            &ldquo;If I spend 20% more, what do I get?&rdquo; needs roughly 30 days in which spend genuinely
-            moved. Fitting a spend-response curve to a flat budget produces a number with no information in
-            it, so that model stays off until the history can support it — and will say
-            &ldquo;insufficient variation&rdquo; rather than guess when it cannot.
-          </div>
+      <MarginalCard daily={dailyQ.data} loading={dailyQ.isLoading} cur={cur} simulated={simulated} />
+    </div>
+  );
+}
+
+// ── layer 5: what the next dollar returns ───────────────────────────────────
+// Fitted twice, on the same days and the same spend, against two different
+// definitions of revenue — GMV Max's own attributed figure and the revenue our
+// commission evidence can verify. That mirrors the band used everywhere else in
+// this product: a claimed ceiling and a proven floor.
+//
+// Either fit may refuse independently, and on Biostime's first month exactly
+// that happens — the reported model answers, the verified one is too uncertain.
+// Showing one and hiding the other would be the misleading option.
+function MarginalCard({ daily, loading, cur, simulated }) {
+  if (loading) return <Card title="What the next dollar returns"><Skeleton h={160} /></Card>;
+
+  const rows = daily || [];
+  const reported = fitSpendResponse(rows.map((d) => ({ spend: d.spend, revenue: d.reported_revenue })));
+  const verified = fitSpendResponse(rows.map((d) => ({ spend: d.spend, revenue: d.measured_paid_gmv })));
+
+  const f2 = (v) => (v == null || !Number.isFinite(v) ? '—' : Number(v).toFixed(2));
+  const answerable = isAnswerable(reported);
+
+  return (
+    <div className="card pad">
+      <div className="k">
+        What the next dollar returns <Basis kind={simulated ? 'simulated' : 'modelled'} />
+      </div>
+
+      {answerable ? (
+        <div className="headline" style={{ fontSize: 22 }}>
+          On GMV Max&rsquo;s own numbers the next dollar returns about{' '}
+          <em style={{ color: 'var(--accent)' }}>{f2(reported.marginal_roas)}</em>
+          <span className="muted" style={{ fontSize: 14, fontWeight: 500 }}>
+            {' '}({f2(reported.marginal_roas_ci[0])}–{f2(reported.marginal_roas_ci[1])})
+          </span>
+          , against an average of {f2(reported.avg_roas)}.
         </div>
-      </Note>
+      ) : (
+        <div className="headline" style={{ fontSize: 20 }}>
+          <em style={{ color: 'var(--text-muted)' }}>Not answerable yet.</em>
+        </div>
+      )}
+
+      {!answerable && <Note tone="info">{reported.reason}</Note>}
+
+      {answerable && (
+        <>
+          <div className="grid g4" style={{ marginTop: 4 }}>
+            <Stat k="Elasticity" v={reported.elasticity.toFixed(2)}
+              sub={reported.diminishing_returns === true ? 'diminishing returns'
+                : reported.diminishing_returns === false ? 'increasing returns'
+                : 'indistinguishable from linear'} />
+            <Stat k="Average ROAS" v={f2(reported.avg_roas)}
+              sub={`${money(reported.total_spend, cur)} over ${reported.days} days`} />
+            <Stat k="Marginal ROAS" tone="paid" v={f2(reported.marginal_roas)}
+              sub={`95% interval ${f2(reported.marginal_roas_ci[0])}–${f2(reported.marginal_roas_ci[1])}`} />
+            <Stat k="Fit quality" v={`R² ${reported.r2.toFixed(2)}`}
+              sub={`spend varied ${(reported.spend_cv * 100).toFixed(0)}% day to day`} />
+          </div>
+
+          <div className="scroll" style={{ marginTop: 16 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>If daily budget</th>
+                  <th className="num">Spend</th>
+                  <th className="num">Modelled revenue</th>
+                  <th className="num">Change in spend</th>
+                  <th className="num">Change in revenue</th>
+                  <th className="num">That change returns</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reported.scenarios.map((s) => (
+                  <tr key={s.delta}>
+                    <td className="tight">
+                      <strong>{s.delta > 0 ? '+' : ''}{(s.delta * 100).toFixed(0)}%</strong>
+                    </td>
+                    <td className="num tight">{money(s.spend, cur)}</td>
+                    <td className="num tight">{money(s.revenue, cur)}</td>
+                    <td className="num tight muted">{s.incremental_spend > 0 ? '+' : ''}{money(s.incremental_spend, cur)}</td>
+                    <td className="num tight muted">{s.incremental_revenue > 0 ? '+' : ''}{money(s.incremental_revenue, cur)}</td>
+                    <td className="num tight"><strong>{f2(s.incremental_roas)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* The verified-revenue fit, reported whether or not it answers. */}
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="k">Against verified ad-driven revenue only</div>
+        {isAnswerable(verified) ? (
+          <p style={{ fontSize: 13, margin: '8px 0 0' }}>
+            Measured against revenue whose commission proves the ads drove it, the next dollar returns{' '}
+            <strong>{f2(verified.marginal_roas)}</strong>{' '}
+            <span className="muted">({f2(verified.marginal_roas_ci[0])}–{f2(verified.marginal_roas_ci[1])})</span>,
+            on an average of {f2(verified.avg_roas)}.
+          </p>
+        ) : (
+          <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
+            <strong>No answer here.</strong> {verified.reason}
+          </p>
+        )}
+      </div>
+
+      <p className="muted" style={{ fontSize: 11.5, marginTop: 14, marginBottom: 0, lineHeight: 1.55 }}>
+        Fitted as <code>revenue = a × spend^b</code> on {reported.days} days, so marginal ROAS is
+        simply <code>b × average ROAS</code>. Two parameters, no machine learning — the number can be argued
+        with, which is the point.
+        {reported.time_confounded && (
+          <> <strong>Caution:</strong> spend and the calendar move together here
+          (correlation {reported.spend_time_correlation.toFixed(2)}), so some of what looks like a spend
+          effect may be a trend. The figure above already controls for a linear time trend; without that
+          control the elasticity would read {reported.naive_elasticity.toFixed(2)} instead
+          of {reported.elasticity.toFixed(2)}.</>
+        )}
+        {' '}Modelled, not measured: it describes what these {reported.days} days imply, and assumes nothing
+        else changes.
+      </p>
     </div>
   );
 }
