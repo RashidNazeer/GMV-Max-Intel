@@ -119,14 +119,19 @@ const capture = (f) => {
     basis: BASIS.MEASURED,
     at_stake: missing ?? 0,
     title: `${pct(1 - cap)} of affiliate revenue has no order-line evidence`,
-    finding: `Seller Center reports ${money(n(a.affiliate_video_sc_gmv), cur)} of affiliate video GMV; our order lines account for ${money(n(a.affiliate_video_ours_gmv), cur)} of it. The missing ${money(missing, cur)} cannot be classified either way.${disconnected ? ' Reacher shows this shop’s affiliate integration as DISCONNECTED, which is the most likely cause.' : ''}`,
-    action: disconnected
-      ? `Reconnect the TikTok Shop affiliate integration in Reacher, then re-sync. Until then, treat the paid/organic split as describing ${pct(cap)} of affiliate revenue.`
-      : `Ask Reacher why order lines are short of the Seller Center figure for this window before relying on the split.`,
+    // Deliberately does NOT blame the integration flag. Measured 2026-09-07:
+    // Reacher's /integrations/status reported Cutler as disconnected while its
+    // own dashboard showed the shop active and collecting, so that flag is not
+    // reliable enough to hang an instruction on. And the shortfall survives on
+    // months that closed long ago, so it is not settling lag either — both of
+    // the easy explanations are ruled out by evidence.
+    finding: `Seller Center reports ${money(n(a.affiliate_video_sc_gmv), cur)} of affiliate video GMV; the order-line feed accounts for ${money(n(a.affiliate_video_ours_gmv), cur)} of it. The missing ${money(missing, cur)} cannot be classified either way, so the paid/organic split below describes ${pct(cap)} of affiliate revenue rather than all of it.`,
+    action: `This gap is inside Reacher — their Seller Center figure and their own transactions feed disagree for identical dates, and it persists on months that settled long ago, so waiting will not close it. Ask them which affiliate orders are excluded from /affiliate/transactions and whether they can be retrieved.`,
     evidence: [
       `capture ${pct(cap, 1)} of Seller Center's affiliate video GMV`,
       `${money(missing, cur)} unaccounted for`,
-      disconnected ? 'integration status: disconnected' : 'integration status: connected',
+      'not settling lag — persists on closed months',
+      disconnected ? 'integrations/status says disconnected (unreliable — dashboard shows active)' : 'integration status: connected',
     ],
   };
 };

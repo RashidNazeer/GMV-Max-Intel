@@ -130,3 +130,22 @@ export const isoDaysAgo = (days) => {
   return d.toISOString().slice(0, 10);
 };
 export const isoToday = () => new Date().toISOString().slice(0, 10);
+
+// ── how long affiliate data takes to settle ─────────────────────────────────
+// Measured 2026-09-07 by reconciling the same window at different ages against
+// Seller Center. Orders keep arriving for about two days:
+//
+//   window ending          Cutler   Biostime
+//   today                   75.9%     95.9%
+//   2 days back             78.5%     98.6%
+//   5 days back             78.5%     96.9%
+//
+// Capture stops improving after two days, so that is the settling period — not
+// a guess, and not the same thing as Cutler's separate structural shortfall,
+// which persists on months that closed long ago.
+//
+// Every window therefore ENDS two days back by default. Showing today's
+// half-arrived revenue next to a fully-arrived channel total would make the
+// most recent day look like a collapse, every single day.
+export const SETTLING_DAYS = 2;
+export const isoSettledEnd = () => isoDaysAgo(SETTLING_DAYS);

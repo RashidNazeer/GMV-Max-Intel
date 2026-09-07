@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
-import { shopSummary, syncRuns, money, isoDaysAgo, isoToday } from '../lib/api.js';
+import { shopSummary, syncRuns, money, isoDaysAgo, isoSettledEnd, SETTLING_DAYS } from '../lib/api.js';
 import OverviewPage from './OverviewPage.jsx';
 import CreativePage from './CreativePage.jsx';
 import ProductsPage from './ProductsPage.jsx';
@@ -34,8 +34,9 @@ export default function Shell({ session, profile }) {
   const [shopId, setShopId] = useState(null);
   const [tab, setTab] = useState('overview');
 
-  const start = useMemo(() => isoDaysAgo(days), [days]);
-  const end = useMemo(() => isoToday(), [days]);
+  // Windows end where the data has settled, not today — see SETTLING_DAYS.
+  const end = useMemo(() => isoSettledEnd(), []);
+  const start = useMemo(() => isoDaysAgo(days + SETTLING_DAYS), [days]);
 
   const summaryQ = useQuery({
     queryKey: ['summary', start, end],
@@ -73,6 +74,13 @@ export default function Shell({ session, profile }) {
           aria-label="Date range">
           {RANGES.map((r) => <option key={r.days} value={r.days}>{r.label}</option>)}
         </select>
+        {/* Spell out the actual dates. "Last 30 days" ending two days ago is not
+            what most people picture, and a window that is not stated is a window
+            that gets misread. */}
+        <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+          title={`Affiliate orders keep arriving for about ${SETTLING_DAYS} days, so the window stops where the data has settled. Including today would show a collapse on the last day, every day.`}>
+          {start} → {end} <span style={{ opacity: .75 }}>· last {SETTLING_DAYS}d still settling</span>
+        </span>
         <span className="muted" style={{ fontSize: 12.5 }}>
           {profile?.display_name || session.user.email}{profile?.role ? ` · ${profile.role}` : ''}
         </span>

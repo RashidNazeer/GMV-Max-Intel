@@ -79,7 +79,11 @@ console.log('\n── affiliate capture (data integrity) ──');
   };
   const r = get(f, 'affiliate-capture');
   check('capture under 85% -> critical', r.severity, SEVERITY.CRITICAL);
-  check('names the disconnected integration', /DISCONNECTED/.test(r.finding), true);
+  check('does NOT blame the integration flag — it proved unreliable',
+    /DISCONNECTED/.test(r.finding), false);
+  check('says the gap is inside Reacher', /inside Reacher/.test(r.action), true);
+  check('rules out settling lag in the evidence',
+    r.evidence.some((e) => /settling lag/.test(e)), true);
   check('capture outranks everything else', ids(f)[0], 'affiliate-capture');
 
   const ok = { ...base, attribution: { ...base.attribution, affiliate_capture: 0.97 } };
