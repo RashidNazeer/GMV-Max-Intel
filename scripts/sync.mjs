@@ -9,21 +9,16 @@
 //
 // Runs with the service role, server-side only. Every shop is isolated: one
 // failing shop is recorded and skipped, never allowed to abort the run (§35).
-import fs from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
 import { normalizeAffiliateTransaction, normalizeShop } from '../src/lib/reacher/normalize.js';
 
-const env = Object.fromEntries(
-  fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)
-    .map((l) => l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)).filter(Boolean)
-    .map((m) => [m[1], m[2]]),
-);
-const REACHER_KEY = fs.readFileSync(process.env.REACHER_KEYFILE || 'C:/Users/RA_shid/.wurx/cli-secrets.env', 'utf8')
-  .match(/^\s*REACHER_API\s*=\s*(.*?)\s*$/m)[1];
+const [SUPABASE_URL, SERVICE_KEY, REACHER_API] =
+  need('VITE_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'REACHER_API');
 
-const db = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-const reacher = createReacherClient({ apiKey: REACHER_KEY });
+const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const reacher = createReacherClient({ apiKey: REACHER_API });
 
 const START = process.argv[2] || '2026-08-07';
 const END = process.argv[3] || '2026-09-05';

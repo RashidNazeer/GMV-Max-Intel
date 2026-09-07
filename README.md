@@ -52,12 +52,17 @@ scripts/
 ## Running it
 
 ```bash
-npm test                       # 25 unit tests, no network, no credentials
-npm run verify:live            # hits the live API, reconciles against Seller Center
+npm test                # 25 unit tests — no network, no credentials
+npm run sync            # pull the latest affiliate data from Reacher
+npm run verify:live     # live check + reconciliation against Seller Center
+npm run check:rls       # proves the access rules hold, signed in and signed out
+npm run audit:bundle    # proves no secret reached the browser build
 ```
 
-`verify:live` reads `REACHER_API` from `C:/Users/RA_shid/.wurx/cli-secrets.env`
-(override with `REACHER_KEYFILE`). **The key is never stored in this repo.**
+**Configuration comes from this project's own `.env.local` and nothing else.**
+No script reaches outside this folder for a credential — `scripts/_env.mjs` is
+the single loader, so there is one place to look and one place to change.
+Copy `.env.example` to `.env.local` to set it up.
 
 ---
 

@@ -5,17 +5,15 @@
 //   node scripts/verify-live.mjs [startDate] [endDate]
 //
 // Read-only. The key is read from outside the repo and never printed.
-import fs from 'node:fs';
+import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
 import { summarize } from '../src/lib/reacher/classify.js';
 
-const KEYFILE = process.env.REACHER_KEYFILE || 'C:/Users/RA_shid/.wurx/cli-secrets.env';
-const m = fs.readFileSync(KEYFILE, 'utf8').match(/^\s*REACHER_API\s*=\s*(.*?)\s*$/m);
-if (!m) { console.error(`REACHER_API not found in ${KEYFILE}`); process.exit(1); }
+const [REACHER_API] = need('REACHER_API');
 
 const START = process.argv[2] || '2026-08-07';
 const END = process.argv[3] || '2026-09-05';
-const client = createReacherClient({ apiKey: m[1] });
+const client = createReacherClient({ apiKey: REACHER_API });
 
 const money = (n, c = 'USD') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: c }).format(n || 0);

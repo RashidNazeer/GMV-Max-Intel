@@ -6,33 +6,30 @@
 // Run after every build, and in CI once there is one.
 import fs from 'node:fs';
 import path from 'node:path';
+import { env } from './_env.mjs';
 
 const DIST = 'dist';
 if (!fs.existsSync(DIST)) { console.error('no dist/ — run `npm run build` first'); process.exit(1); }
 
-function readEnv(file) {
-  if (!fs.existsSync(file)) return {};
-  return Object.fromEntries(
-    fs.readFileSync(file, 'utf8').split(/\r?\n/)
-      .map((l) => l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)).filter(Boolean)
-      .map((m) => [m[1], m[2]]).filter(([, v]) => v));
-}
+// Every value in this project's own env that is NOT meant for the browser must
+// be absent from the build. Deriving the list from the env file rather than
+// hard-coding names means a secret added later is covered automatically — the
+// default is "this is secret", which is the safe direction to be wrong in.
+//
+// PUBLIC_IDS are the deliberate exceptions: identifiers, not credentials.
+// The Supabase project ref is a substring of VITE_SUPABASE_URL, so it is in the
+// bundle by definition and flagging it would train us to ignore the audit.
+// Anything added here needs a reason written next to it.
+const PUBLIC_IDS = new Set([
+  'GMV_INTEL_PROJECT_REF',  // appears inside https://<ref>.supabase.co — public by construction
+  'GMV_INTEL_ORG_ID',       // Supabase org identifier, grants nothing on its own
+]);
 
-const local = readEnv('.env.local');
-const wurx = readEnv(process.env.REACHER_KEYFILE || 'C:/Users/RA_shid/.wurx/cli-secrets.env');
-
-// Values that must NEVER appear in a browser asset.
-const forbidden = [
-  ['REACHER_API', wurx.REACHER_API],
-  ['SUPABASE_SERVICE_ROLE_KEY', local.SUPABASE_SERVICE_ROLE_KEY],
-  ['GMV_INTEL_DB_PASSWORD', wurx.GMV_INTEL_DB_PASSWORD],
-  ['SUPABASE_ACCESS_TOKEN', wurx.SUPABASE_ACCESS_TOKEN],
-  ['GH_TOKEN', wurx.GH_TOKEN],
-  ['VERCEL_TOKEN', wurx.VERCEL_TOKEN],
-].filter(([, v]) => v);
+const forbidden = Object.entries(env)
+  .filter(([k, v]) => !k.startsWith('VITE_') && !PUBLIC_IDS.has(k) && v && String(v).length >= 12);
 
 // The anon key SHOULD be present — it is public by design and the app needs it.
-const expected = [['VITE_SUPABASE_ANON_KEY', local.VITE_SUPABASE_ANON_KEY]].filter(([, v]) => v);
+const expected = [['VITE_SUPABASE_ANON_KEY', env.VITE_SUPABASE_ANON_KEY]].filter(([, v]) => v);
 
 const files = [];
 (function walk(dir) {

@@ -3,17 +3,15 @@
 // convincing evidence is trying to read the data both ways.
 //
 //   node scripts/rls-check.mjs
-import fs from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { env, need } from './_env.mjs';
 
-const env = Object.fromEntries(
-  fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)
-    .map((l) => l.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map((m) => [m[1], m[2]]));
-
-const KEYFILE = process.env.REACHER_KEYFILE || 'C:/Users/RA_shid/.wurx/cli-secrets.env';
+need('VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY');
 const EMAIL = process.argv[2] || 'mrrashid3255@gmail.com';
-const tag = `GMV_INTEL_LOGIN_${EMAIL.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`;
-const pw = fs.readFileSync(KEYFILE, 'utf8').match(new RegExp(`^${tag}=(.*)$`, 'm'))?.[1]?.trim();
+const tag = EMAIL === 'mrrashid3255@gmail.com'
+  ? 'BOSS_LOGIN_PASSWORD'
+  : `LOGIN_${EMAIL.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`;
+const pw = env[tag];
 
 const results = [];
 const check = (name, pass, detail) => {
@@ -42,7 +40,7 @@ const newAnon = () => createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON
 
 // ── signed in as the Boss: everything, through the anon key + a session ─────
 if (!pw) {
-  console.log(`\nno stored password for ${EMAIL} — run scripts/create-user.mjs first`);
+  console.log(`\nno stored password for ${EMAIL} (looked for ${tag} in .env.local) — run scripts/create-user.mjs first`);
   process.exit(1);
 }
 {

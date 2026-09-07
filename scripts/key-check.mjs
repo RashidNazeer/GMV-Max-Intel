@@ -1,12 +1,11 @@
 // What makes an affiliate order line unique? The answer decides the primary key
 // of the fact table, and therefore whether re-syncing is idempotent or silently
 // duplicates revenue. Worth five minutes now rather than a data bug later.
-import fs from 'node:fs';
+import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
 
-const key = fs.readFileSync(process.env.REACHER_KEYFILE || 'C:/Users/RA_shid/.wurx/cli-secrets.env', 'utf8')
-  .match(/^\s*REACHER_API\s*=\s*(.*?)\s*$/m)[1];
-const client = createReacherClient({ apiKey: key });
+const [REACHER_API] = need('REACHER_API');
+const client = createReacherClient({ apiKey: REACHER_API });
 
 for (const shop of [{ id: 11515, name: 'Cutler' }, { id: 11528, name: 'Biostime' }]) {
   const { transactions: rows } = await client.fetchAffiliateTransactions({
