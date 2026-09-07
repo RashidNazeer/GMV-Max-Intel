@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './lib/supabase.js';
 import LoginPage from './pages/LoginPage.jsx';
-import DashboardPage from './pages/DashboardPage.jsx';
+import Shell from './pages/Shell.jsx';
 
 export default function App() {
   const [session, setSession] = useState(undefined);   // undefined = still checking
@@ -40,5 +40,5 @@ export default function App() {
     );
   }
 
-  return <DashboardPage session={session} profile={profile} />;
+  return <Shell session={session} profile={profile} />;
 }

@@ -142,6 +142,69 @@ export function createReacherClient({
       request('POST', '/shop-gmv/timeseries', { shopId, body: { start_date: startDate, end_date: endDate } }),
     sellerCenterOverview: (shopId, startDate, endDate) =>
       request('POST', '/seller-center/shop-overview', { shopId, body: { start_date: startDate, end_date: endDate } }),
+
+    // ── Layer 3: the video feed ───────────────────────────────────────────
+    // page_size caps at 100 — a 200 is rejected with HTTP 422. A 30-day window
+    // lists 33,257 videos for one shop, almost all with no sales, so this walks
+    // the head of a GMV-sorted list rather than trying to enumerate everything.
+    // min_gmv drops the long tail at the server rather than over the wire.
+    async fetchTopVideos({ shopId, startDate, endDate, want = 500, minGmv = 1 }) {
+      const out = [];
+      const pageSize = 100;
+      for (let page = 1; out.length < want; page++) {
+        const res = await request('POST', '/videos/performance', {
+          shopId,
+          body: {
+            start_date: startDate, end_date: endDate,
+            page, page_size: pageSize,
+            sort_by: 'video_gmv', sort_dir: 'desc', min_gmv: minGmv,
+          },
+        });
+        const rows = res.data || [];
+        out.push(...rows);
+        if (rows.length < pageSize) break;
+        if (page >= Math.ceil(want / pageSize)) break;
+      }
+      return out.slice(0, want);
+    },
+
+    // ── Layer 4: catalogue and the Seller Center funnel ───────────────────
+    pnlProducts: (shopId) => request('GET', '/pnl/products', { shopId }),
+
+    async fetchSellerCenterProducts({ shopId, startDate, endDate, want = 200 }) {
+      const out = [];
+      const pageSize = 50;
+      for (let page = 1; out.length < want; page++) {
+        const res = await request('POST', '/seller-center/products', {
+          shopId,
+          body: {
+            start_date: startDate, end_date: endDate,
+            page, page_size: pageSize, sort_by: 'gmv', sort_dir: 'desc',
+          },
+        });
+        const rows = res.data || [];
+        out.push(...rows);
+        const total = res.pagination?.total_count ?? out.length;
+        if (rows.length < pageSize || out.length >= total) break;
+      }
+      return out.slice(0, want);
+    },
+
+    // ── GMV Max. Never yet returned a campaign for our shops. ─────────────
     listGmvMaxCampaigns: (shopId) => request('GET', '/gmv-max/campaigns', { shopId }),
+    campaignSettings: (shopId, campaignId) =>
+      request('GET', `/gmv-max/campaigns/${encodeURIComponent(campaignId)}/settings`, { shopId }),
+    campaignMetrics: (shopId, campaignId, startDate, endDate) =>
+      request('GET', `/gmv-max/campaigns/${encodeURIComponent(campaignId)}/metrics`, {
+        shopId, query: { start_date: startDate, end_date: endDate },
+      }),
+    campaignChanges: (shopId, campaignId) =>
+      request('GET', `/gmv-max/campaigns/${encodeURIComponent(campaignId)}/changes`, {
+        shopId, query: { page: 1, page_size: 100 },
+      }),
+    campaignSpendBySurface: (shopId, campaignId, startDate, endDate) =>
+      request('GET', `/gmv-max/campaigns/${encodeURIComponent(campaignId)}/spend-by-surface`, {
+        shopId, query: { start_date: startDate, end_date: endDate },
+      }),
   };
 }

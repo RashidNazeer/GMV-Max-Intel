@@ -48,6 +48,65 @@ export async function lastSync(shopId) {
   return data?.[0] || null;
 }
 
+// ── layers 2-4 and spend ────────────────────────────────────────────────────
+
+const one = (rows) => (Array.isArray(rows) ? rows[0] ?? null : rows ?? null);
+
+async function rpc(fn, args) {
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export const shopAttribution  = (id, s, e) => rpc('shop_attribution', { p_shop_id: id, p_start: s, p_end: e }).then(one);
+export const shopChannelDaily = (id, s, e) => rpc('shop_channel_daily', { p_shop_id: id, p_start: s, p_end: e });
+
+export const shopCreativeHealth = (id, s, e) => rpc('shop_creative_health', { p_shop_id: id, p_start: s, p_end: e }).then(one);
+export const shopTopVideos = (id, s, e, limit = 25) =>
+  rpc('shop_top_videos', { p_shop_id: id, p_start: s, p_end: e, p_limit: limit });
+
+export const shopProducts = (id, s, e, limit = 50) =>
+  rpc('shop_products', { p_shop_id: id, p_start: s, p_end: e, p_limit: limit });
+
+// shop_paid_roas returns NO ROW when a shop has no campaigns, rather than a row
+// of zeros. `null` here therefore means "no spend data at all", which is a
+// different claim from "spend was zero" and must stay distinguishable on screen.
+export const shopPaidRoas    = (id, s, e) => rpc('shop_paid_roas', { p_shop_id: id, p_start: s, p_end: e }).then(one);
+export const shopSpendDaily  = (id, s, e) => rpc('shop_spend_daily', { p_shop_id: id, p_start: s, p_end: e });
+export const shopDataSources = (id) => rpc('shop_data_sources', { p_shop_id: id }).then(one);
+
+export async function listCampaigns(shopId) {
+  const { data, error } = await supabase
+    .from('gmv_max_campaigns')
+    .select('campaign_id, campaign_name, status, campaign_type, product_id, target_roas, daily_budget, currency, data_source, synced_at')
+    .eq('shop_id', shopId)
+    .order('campaign_name');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function listSettingsChanges(shopId, limit = 50) {
+  const { data, error } = await supabase
+    .from('gmv_max_settings_changes')
+    .select('campaign_id, changed_at, field, old_value, new_value, data_source')
+    .eq('shop_id', shopId)
+    .order('changed_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function syncRuns(shopId, limit = 8) {
+  const { data, error } = await supabase
+    .from('sync_runs')
+    .select('job, status, started_at, finished_at, rows_written, error, window_start, window_end')
+    .eq('shop_id', shopId)
+    .order('started_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 // ── formatting ──────────────────────────────────────────────────────────────
 export const money = (n, currency = 'USD') =>
   n == null ? '—' : new Intl.NumberFormat('en-US', {

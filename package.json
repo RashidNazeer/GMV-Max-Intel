@@ -7,13 +7,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "test": "node scripts/classify-tests.mjs",
+    "preview": "node scripts/preview.mjs",
+    "test": "node scripts/classify-tests.mjs && node scripts/recommend-tests.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "keycheck": "node scripts/key-check.mjs",
     "audit:bundle": "node scripts/bundle-audit.mjs",
     "check:rls": "node scripts/rls-check.mjs",
-    "sync": "node scripts/sync.mjs"
+    "sync": "node scripts/sync.mjs",
+    "sync:context": "node scripts/sync-context.mjs",
+    "demo:spend": "node scripts/demo-spend.mjs",
+    "demo:purge": "node scripts/demo-spend.mjs --purge",
+    "check:attribution": "node scripts/check-attribution.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",

@@ -21,21 +21,57 @@ const check = (name, pass, detail) => {
 
 const newAnon = () => createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY, { auth: { persistSession: false } });
 
+// Every table holding client revenue, and every function that reads one. This
+// list has to grow with the schema: a table added without a line here is a
+// table nobody proved was protected.
+const REVENUE_TABLES = [
+  'affiliate_order_lines', 'shops', 'shop_daily_channels', 'video_performance',
+  'product_catalog', 'product_window_metrics',
+  'gmv_max_campaigns', 'gmv_max_daily_metrics', 'gmv_max_settings_changes',
+];
+
+const REVENUE_FUNCTIONS = (shopId) => [
+  ['shop_affiliate_summary', { p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_attribution',       { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_channel_daily',     { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_creative_health',   { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_top_videos',        { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07', p_limit: 5 }],
+  ['shop_products',          { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07', p_limit: 5 }],
+  ['shop_paid_roas',         { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_spend_daily',       { p_shop_id: shopId, p_start: '2026-08-08', p_end: '2026-09-07' }],
+  ['shop_data_sources',      { p_shop_id: shopId }],
+];
+
+// A real shop id, so a function that fails for a bad argument cannot be
+// mistaken for one that refused on permissions.
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+
 // ── signed out: the public key on its own must reach nothing ────────────────
 {
   const c = newAnon();
-  const r = await c.rpc('shop_affiliate_summary', { p_start: '2026-08-07', p_end: '2026-09-05' });
-  check('signed out cannot call the summary function', !!r.error, (r.error?.message || `RETURNED ${r.data?.length} ROWS`).slice(0, 70));
 
-  const rows = await c.from('affiliate_order_lines').select('id').limit(5);
-  check('signed out cannot read order lines',
-    !!rows.error || (rows.data || []).length === 0,
-    rows.error ? rows.error.message.slice(0, 50) : `returned ${rows.data.length} rows`);
+  let leaked = [];
+  for (const t of REVENUE_TABLES) {
+    const r = await c.from(t).select('*').limit(1);
+    if (!r.error && (r.data || []).length > 0) leaked.push(t);
+  }
+  check(`signed out reaches none of ${REVENUE_TABLES.length} revenue tables`,
+    leaked.length === 0, leaked.length ? `LEAKED: ${leaked.join(', ')}` : 'all empty or denied');
 
-  const shops = await c.from('shops').select('id').limit(5);
-  check('signed out cannot read shops',
-    !!shops.error || (shops.data || []).length === 0,
-    shops.error ? shops.error.message.slice(0, 50) : `returned ${shops.data.length} rows`);
+  let callable = [];
+  for (const [fn, args] of REVENUE_FUNCTIONS(ZERO_UUID)) {
+    const r = await c.rpc(fn, args);
+    if (!r.error) callable.push(fn);
+  }
+  check(`signed out cannot call any of ${REVENUE_FUNCTIONS(ZERO_UUID).length} reporting functions`,
+    callable.length === 0, callable.length ? `CALLABLE: ${callable.join(', ')}` : 'all denied');
+
+  // The view added in migration 005 joins across shops; without
+  // security_invoker it would ignore RLS entirely.
+  const v = await c.from('video_latest').select('video_id').limit(1);
+  check('signed out cannot read the video_latest view',
+    !!v.error || (v.data || []).length === 0,
+    v.error ? v.error.message.slice(0, 50) : `returned ${v.data.length} rows`);
 }
 
 // ── signed in as the Boss: everything, through the anon key + a session ─────
@@ -74,6 +110,36 @@ if (!pw) {
   const prof = await c.from('profiles').update({ role: 'boss' }).eq('id', (await c.auth.getUser()).data.user.id);
   check('profile role guard exists', prof.error == null || /only the Boss/.test(prof.error.message),
     prof.error ? prof.error.message.slice(0, 50) : 'boss updating own role is allowed (expected)');
+
+  // ── the layers added in migrations 004-007 ───────────────────────────────
+  const shopId = (await c.from('shops').select('id').limit(1)).data?.[0]?.id;
+  if (shopId) {
+    let broken = [];
+    for (const [fn, args] of REVENUE_FUNCTIONS(shopId)) {
+      const r = await c.rpc(fn, args);
+      if (r.error) broken.push(`${fn}: ${r.error.message.slice(0, 40)}`);
+    }
+    check(`boss can call all ${REVENUE_FUNCTIONS(shopId).length} reporting functions`,
+      broken.length === 0, broken.length ? broken.join(' | ') : 'all returned');
+
+    // A client must never write a fact row, on ANY of the new tables. This is
+    // the check that would catch a policy added later for convenience.
+    const writable = [];
+    const probes = {
+      shop_daily_channels: { shop_id: shopId, day: '2001-01-01', gmv: 999999 },
+      video_performance: { shop_id: shopId, video_id: 'rls-probe', window_start: '2001-01-01', window_end: '2001-01-02', video_gmv: 999999 },
+      product_catalog: { shop_id: shopId, product_id: 'rls-probe', title: 'probe' },
+      product_window_metrics: { shop_id: shopId, product_id: 'rls-probe', window_start: '2001-01-01', window_end: '2001-01-02', gmv: 999999 },
+      gmv_max_campaigns: { shop_id: shopId, campaign_id: 'rls-probe', data_source: 'reacher' },
+      gmv_max_daily_metrics: { shop_id: shopId, campaign_id: 'rls-probe', day: '2001-01-01', spend: 999999, data_source: 'reacher' },
+    };
+    for (const [table, row] of Object.entries(probes)) {
+      const w = await c.from(table).insert(row);
+      if (!w.error) writable.push(table);
+    }
+    check('the client cannot insert into any fact table',
+      writable.length === 0, writable.length ? `WRITABLE: ${writable.join(', ')}` : 'all 6 refused');
+  }
 }
 
 const failed = results.filter((r) => !r).length;

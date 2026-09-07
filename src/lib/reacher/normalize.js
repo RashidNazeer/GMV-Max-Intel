@@ -100,3 +100,201 @@ export function normalizeShop(s, integrations = []) {
     integrations: byKey,
   };
 }
+
+// ============================================================
+// Layer 2 — whole-shop channel mix, from Seller Center.
+//
+// Verified on live data: channels.video.gmv = video.affiliate + video.seller,
+// and video + live + product_card = the shop total, exactly. The daily series
+// does NOT break out live.affiliate, live.seller, product_card.shop_tab or
+// product_card.search — those arrive null every day, and are stored as null.
+// Coercing them to 0 would assert "no revenue through search", which is a
+// claim the source never made.
+// ============================================================
+export function normalizeDailyChannels(d, shopId, currency) {
+  const ch = d.channels || {};
+  const video = ch.video || {}, live = ch.live || {}, card = ch.product_card || {};
+  const traffic = d.traffic || {};
+  return {
+    shop_id: shopId,
+    day: String(d.date).slice(0, 10),
+
+    gmv: num(d.gmv),
+    orders: num(d.orders),
+    items_sold: num(d.items_sold),
+    customers: num(d.customers),
+    aov: num(d.aov),
+
+    video_gmv: num(video.gmv),
+    video_affiliate_gmv: num(video.affiliate),
+    video_seller_gmv: num(video.seller),
+    live_gmv: num(live.gmv),
+    live_affiliate_gmv: num(live.affiliate),
+    live_seller_gmv: num(live.seller),
+    product_card_gmv: num(card.gmv),
+    product_card_shop_tab_gmv: num(card.shop_tab),
+    product_card_search_gmv: num(card.search),
+
+    product_impressions: num(traffic.product_impressions),
+    product_clicks: num(traffic.product_clicks),
+
+    currency: currency || null,
+    raw: d,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// ── Layer 3 — the video feed. Enrichment only: money comes from order lines. ──
+export function normalizeVideo(v, shopId, windowStart, windowEnd, rank) {
+  return {
+    shop_id: shopId,
+    video_id: str(v.video_id),
+    window_start: windowStart,
+    window_end: windowEnd,
+    title: str(v.title),
+    creator_handle: str(v.creator_handle),
+    tiktok_url: str(v.tiktok_url),
+    video_gmv: num(v.video_gmv),
+    views: num(v.views),
+    like_count: num(v.like_count),
+    comment_count: num(v.comment_count),
+    order_count: num(v.order_count),
+    posted_date: ts(v.posted_date),
+    gmv_rank: rank,
+    raw: v,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// ── Layer 4 — catalogue. Price range is derived across SKUs, because a product
+// with six SKUs has no single price and quoting one of them would be arbitrary.
+export function normalizeProductCatalog(p, shopId) {
+  const skus = Array.isArray(p.skus) ? p.skus : [];
+  const prices = skus.map((s) => num(s.sale_price)).filter((n) => n != null);
+  const stock = skus.map((s) => num(s.inventory)).filter((n) => n != null);
+  return {
+    shop_id: shopId,
+    product_id: str(p.product_id),
+    title: str(p.title),
+    image_url: str(p.primary_image_url),
+    brand_name: str(p.brand_name),
+    currency: str(p.currency),
+    sku_count: skus.length,
+    min_price: prices.length ? Math.min(...prices) : null,
+    max_price: prices.length ? Math.max(...prices) : null,
+    inventory: stock.length ? stock.reduce((a, b) => a + b, 0) : null,
+    commission_rate: num(p.commission?.commission_rate),
+    shop_ads_commission_rate: num(p.commission?.shop_ads_commission_rate),
+    discount_pct: num(p.discount_pct),   // null across the whole catalogue today
+    raw: p,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// ── Layer 4 — the Seller Center funnel for one product over one window. ──────
+export function normalizeProductWindow(p, shopId, windowStart, windowEnd) {
+  const s = p.sales || {}, f = p.funnel || {}, c = p.channels || {};
+  return {
+    shop_id: shopId,
+    product_id: str(p.product_id),
+    window_start: windowStart,
+    window_end: windowEnd,
+
+    product_name: str(p.product_name),
+    cover_image_url: str(p.cover_image_url),
+    days_with_data: num(p.days_with_data),
+
+    gmv: num(s.gmv),
+    orders: num(s.orders),
+    sku_orders: num(s.sku_orders),
+    items_sold: num(s.items_sold),
+    customers: num(s.customers),
+    aov: num(s.aov),
+    refunds: num(s.refunds),
+    items_returned: num(s.items_canceled_and_returned),
+
+    impressions: num(f.impressions),
+    unique_viewers: num(f.unique_viewers),
+    clicks: num(f.clicks),
+    unique_clickers: num(f.unique_clickers),
+    ctr: num(f.ctr),
+    add_to_cart: num(f.add_to_cart),
+    add_to_cart_rate: num(f.add_to_cart_rate),
+    click_to_order_rate: num(f.click_to_order_rate),
+
+    seller_video_gmv: num(c.seller?.video_gmv),
+    seller_live_gmv: num(c.seller?.live_gmv),
+    affiliate_gmv: num(c.affiliate?.gmv),
+    affiliate_video_gmv: num(c.affiliate?.video_gmv),
+    affiliate_live_gmv: num(c.affiliate?.live_gmv),
+    product_card_gmv: num(c.product_card?.gmv),
+    shop_tab_gmv: num(c.shop_tab?.gmv),
+
+    raw: p,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// ============================================================
+// GMV Max. Field names taken from the published OpenAPI document, not from the
+// vendor's written spec — no campaign has ever been returned for our shops, so
+// unlike everything above these have not been seen on a live payload. They are
+// written defensively (every field optional-chained) and the first real sync
+// should be treated as a discovery run.
+// ============================================================
+export function normalizeCampaign(c, shopId, settings = null, dataSource = 'reacher') {
+  return {
+    shop_id: shopId,
+    campaign_id: str(c.campaign_id),
+    campaign_name: str(c.campaign_name),
+    status: str(settings?.status ?? c.status),
+    campaign_type: str(c.shopping_ads_type),
+    product_id: str(c.product_id),
+    target_roas: num(settings?.target_roas ?? c.roas_bid),
+    daily_budget: num(settings?.daily_budget ?? c.budget),
+    optimization_mode: str(settings?.schedule_type),
+    currency: str(c.currency),
+    data_source: dataSource,
+    raw: { campaign: c, settings },
+    synced_at: new Date().toISOString(),
+  };
+}
+
+export function normalizeCampaignDay(m, shopId, campaignId, dataSource = 'reacher') {
+  return {
+    shop_id: shopId,
+    campaign_id: campaignId,
+    day: String(m.date).slice(0, 10),
+    spend: num(m.spend),
+    impressions: num(m.impressions),
+    clicks: num(m.clicks),
+    orders: num(m.orders),
+    revenue: num(m.gross_revenue),
+    // Reacher exposes both `roas` and `ad_roi`; keep whichever is present
+    // rather than computing one, so "what GMV Max reported" stays their number.
+    roi: num(m.roas ?? m.ad_roi),
+    cpc: num(m.cpc),
+    cpm: num(m.cpm),
+    ctr: num(m.ctr),
+    spend_affiliate: num(m.spend_affiliate),
+    spend_product_card: num(m.spend_product_card),
+    spend_brand: num(m.spend_brand),
+    data_source: dataSource,
+    raw: m,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+export function normalizeSettingsChange(c, shopId, campaignId, dataSource = 'reacher') {
+  return {
+    shop_id: shopId,
+    campaign_id: campaignId,
+    changed_at: ts(c.changed_at),
+    field: str(c.field),
+    old_value: c.old_value == null ? null : String(c.old_value),
+    new_value: c.new_value == null ? null : String(c.new_value),
+    data_source: dataSource,
+    raw: c,
+    synced_at: new Date().toISOString(),
+  };
+}
