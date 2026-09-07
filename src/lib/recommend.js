@@ -325,3 +325,151 @@ export function recommend(f) {
   const real = all.filter((r) => !r._fallback);
   return real.length ? real : all.filter((r) => r._fallback);
 }
+
+// ============================================================
+// WHAT IS WORKING.
+//
+// The rules above only ever speak when something is wrong, which makes the
+// panel a complaints box: a shop can be doing three things well and read as
+// nothing but problems. That is not a neutral omission — someone deciding where
+// next month's budget goes needs to know what to PROTECT as much as what to
+// fix, and "no findings" is a far weaker statement than "these four things are
+// working".
+//
+// Same discipline as the problems: every claim carries the numbers that
+// produced it, and a rule that cannot clear its evidence bar stays silent. A
+// strength invented to balance the page would be worse than an unbalanced page.
+// ============================================================
+
+// 1. Demand that does not depend on spend is the most valuable thing a shop has.
+const organicStrength = (f) => {
+  const a = f.attribution; if (!a) return null;
+  const paid = n(a.measured_paid_gmv), organic = n(a.measured_organic_gmv);
+  if (paid == null || organic == null) return null;
+  const measured = paid + organic;
+  if (measured <= 0) return null;
+  const share = organic / measured;
+  if (share < 0.5) return null;
+
+  const cur = f.shop?.currency || 'USD';
+  return {
+    severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: organic,
+    title: `${pct(share)} of measured revenue needs no ad support`,
+    finding: `${money(organic, cur)} came through standard commission — creators posting because the product sells, not because delivery was bought. That is demand you already own, and it is the part of the business that survives a budget cut.`,
+    action: `Protect it. When you judge a campaign, this is the baseline it has to beat, not add to.`,
+    evidence: [`organic ${money(organic, cur)}`, `ad-driven ${money(paid, cur)}`, `of ${money(measured, cur)} measured`],
+  };
+};
+organicStrength.ruleId = 'organic-strength';
+
+// 2. Creative that is gaining, and creative that is arriving.
+const creativeMomentum = (f) => {
+  const c = f.creative; if (!c || c.trend_measurable === false) return null;
+  const rising = n(c.rising_videos), risingGmv = n(c.rising_gmv), fresh = n(c.new_videos);
+  if (!rising || rising < 3) return null;
+
+  const cur = f.shop?.currency || 'USD';
+  return {
+    severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: risingGmv ?? 0,
+    title: `${rising} videos are gaining, carrying ${money(risingGmv, cur)}`,
+    finding: `These are up 30% or more week-on-week. Against a catalogue where most creative decays, the ones climbing are the closest thing to a repeatable formula this shop has.${fresh ? ` ${fresh} more made their first sale in the last 7 days, so the pipeline is not empty.` : ''}`,
+    action: `Look at what these have in common — hook, format, creator tier — and brief against that, rather than against the all-time winners, which are already past their peak.`,
+    evidence: [
+      `${rising} videos up >30%`,
+      `${money(risingGmv, cur)} on rising creative`,
+      fresh ? `${fresh} first sold this week` : 'no new videos this week',
+    ],
+  };
+};
+creativeMomentum.ruleId = 'creative-momentum';
+
+// 3. Creators who sell without being pushed — the exact opposite of the
+// ad-dependence warning, and the ones worth renewing first.
+const organicCreators = (f) => {
+  const vids = f.videos || []; if (vids.length < 5) return null;
+  const cur = f.shop?.currency || 'USD';
+  const byCreator = new Map();
+  for (const v of vids) {
+    const h = v.creator_handle; if (!h) continue;
+    const e = byCreator.get(h) || { paid: 0, organic: 0 };
+    e.paid += n(v.paid_gmv) || 0;
+    e.organic += n(v.organic_gmv) || 0;
+    byCreator.set(h, e);
+  }
+  const total = [...byCreator.values()].reduce((a, e) => a + e.paid + e.organic, 0);
+  if (!total) return null;
+
+  const good = [...byCreator.entries()]
+    .map(([handle, e]) => ({ handle, gmv: e.paid + e.organic, share: e.paid / (e.paid + e.organic || 1) }))
+    .filter((x) => x.share <= 0.2 && x.gmv >= total * 0.03)
+    .sort((a, b) => b.gmv - a.gmv);
+  if (!good.length) return null;
+
+  const sum = good.reduce((a, x) => a + x.gmv, 0);
+  return {
+    severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: sum,
+    title: `${good.length} creator${good.length > 1 ? 's are' : ' is'} selling ${money(sum, cur)} without ad support`,
+    finding: `Their revenue is 80%+ standard commission — the content is finding its own audience. These partnerships return more than the commission costs, because you are not also paying for the reach.`,
+    action: `Renew and widen these first. Give them early access to new products before spending to push the same products through creators who need it.`,
+    evidence: good.slice(0, 4).map((x) => `@${x.handle} — ${money(x.gmv, cur)}, ${pct(1 - x.share)} organic`),
+  };
+};
+organicCreators.ruleId = 'organic-creators';
+
+// 4. Products converting well above the shop — where extra traffic is worth buying.
+const strongConverters = (f) => {
+  const ps = (f.products || []).filter((p) => n(p.impressions) >= 50000 && n(p.click_to_order_rate) != null);
+  if (ps.length < 3) return null;
+  const rates = ps.map((p) => n(p.click_to_order_rate)).sort((a, b) => a - b);
+  const median = rates[Math.floor(rates.length / 2)];
+  if (!median) return null;
+
+  const cur = f.shop?.currency || 'USD';
+  const strong = ps
+    .filter((p) => n(p.click_to_order_rate) >= median * 1.4 && n(p.gmv) > 0)
+    .sort((a, b) => n(b.gmv) - n(a.gmv));
+  if (!strong.length) return null;
+
+  const s = strong[0];
+  return {
+    severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: n(s.gmv) ?? 0,
+    title: `${strong.length} product${strong.length > 1 ? 's convert' : ' converts'} well above the shop`,
+    finding: `"${(s.title || s.product_id || '').slice(0, 56)}" turns ${pct(n(s.click_to_order_rate), 2)} of clicks into orders against a shop median of ${pct(median, 2)}. Traffic sent here converts — the listing is not the constraint.`,
+    action: `These are where extra spend meets the least friction. If budget is going up, put it behind these before the ones that leak at the page.`,
+    evidence: strong.slice(0, 3).map((x) =>
+      `${(x.title || x.product_id).slice(0, 34)} — ${pct(n(x.click_to_order_rate), 2)} vs ${pct(median, 2)}, ${money(n(x.gmv), cur)}`),
+  };
+};
+strongConverters.ruleId = 'strong-converters';
+
+// 5. Evidence quality is itself a result: it decides how much of the rest can
+// be believed, and it is the one thing Cutler cannot currently claim.
+const evidenceQuality = (f) => {
+  const a = f.attribution; if (!a) return null;
+  const cap = n(a.affiliate_capture);
+  if (cap == null || cap < 0.95) return null;
+  const cur = f.shop?.currency || 'USD';
+  return {
+    severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: 0,
+    title: `The affiliate evidence is essentially complete`,
+    finding: `Order lines account for ${pct(cap, 1)} of the affiliate revenue Seller Center reports for this window, so the paid/organic split describes nearly all of it rather than a sample.`,
+    action: `Nothing to do — but worth knowing when comparing against a shop whose capture is lower. The numbers here carry more weight.`,
+    evidence: [`capture ${pct(cap, 1)}`, `${money(n(a.affiliate_video_ours_gmv), cur)} accounted for`],
+  };
+};
+evidenceQuality.ruleId = 'evidence-quality';
+
+const WORKING_RULES = [
+  organicStrength, organicCreators, creativeMomentum, strongConverters, evidenceQuality,
+];
+
+/** Strengths, most valuable first. Same contract as recommend(): silence is a valid answer. */
+export function whatsWorking(f = {}) {
+  const out = [];
+  for (const rule of WORKING_RULES) {
+    let r = null;
+    try { r = rule(f); } catch { r = null; }
+    if (r) out.push({ ...r, id: rule.ruleId });
+  }
+  return out.sort((a, b) => (b.at_stake ?? 0) - (a.at_stake ?? 0));
+}

@@ -120,7 +120,7 @@ export default function Shell({ session, profile }) {
             </div>
 
             {shopForPage && (
-              <Page key={`${tab}-${shopForPage.id}`} shop={shopForPage} start={start} end={end} days={days} />
+              <Page key={`${tab}-${shopForPage.id}`} shop={shopForPage} start={start} end={end} days={days} onOpenTab={setTab} />
             )}
 
             <SyncFooter shopId={shopForPage?.id} />

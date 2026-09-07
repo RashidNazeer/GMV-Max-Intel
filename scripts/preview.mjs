@@ -11,7 +11,7 @@
 // so RLS is exercised too, not bypassed with the service role.
 import { createClient } from '@supabase/supabase-js';
 import { env, need } from './_env.mjs';
-import { recommend } from '../src/lib/recommend.js';
+import { recommend, whatsWorking } from '../src/lib/recommend.js';
 
 const [URL, ANON] = need('VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY');
 const days = Number(process.argv[2] || 30);
@@ -26,10 +26,24 @@ const { error: authErr } = await db.auth.signInWithPassword({
 if (authErr) { console.error('sign-in failed:', authErr.message); process.exit(1); }
 
 const one = (r) => (Array.isArray(r) ? r[0] ?? null : r ?? null);
-const call = async (fn, args) => {
-  const { data, error } = await db.rpc(fn, args);
-  if (error) throw new Error(`${fn}: ${error.message}`);
-  return data;
+
+// Retry transient network failures. Without this the script reports "FAILED"
+// for a dropped connection, which reads exactly like a broken function — and
+// this run is supposed to be the thing that tells those two apart. A check that
+// cannot distinguish its own flakiness from a real fault is not a check.
+const call = async (fn, args, attempts = 3) => {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const { data, error } = await db.rpc(fn, args);
+      if (!error) return data;
+      last = error;
+      // A SQL error will not fix itself; only retry transport-level trouble.
+      if (!/fetch failed|network|ECONN|timeout/i.test(error.message)) break;
+    } catch (e) { last = e; }
+    await new Promise((r) => setTimeout(r, 400 * 2 ** i));
+  }
+  throw new Error(`${fn}: ${last?.message ?? 'unknown error'}`);
 };
 
 const m = (v, c = 'USD') => (v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(v));
@@ -106,6 +120,19 @@ for (const s of shops || []) {
     console.log(`\n  [${r.severity.toUpperCase()}] ${r.title}   <${r.basis}>`);
     console.log(`     ${r.finding}`);
     console.log(`     DO: ${r.action}`);
+    for (const e of r.evidence || []) console.log(`       · ${e}`);
+  }
+
+  const wins = whatsWorking({
+    shop: { shop_name: s.shop_name, currency: cur, affiliate_connected: s.affiliate_connected },
+    days, attribution: a, creative, videos, products, roas,
+  });
+  console.log(`
+WHAT IS WORKING  (${wins.length})`);
+  for (const r of wins) {
+    console.log(`
+  [OK] ${r.title}   <${r.basis}>`);
+    console.log(`     ${r.finding}`);
     for (const e of r.evidence || []) console.log(`       · ${e}`);
   }
 

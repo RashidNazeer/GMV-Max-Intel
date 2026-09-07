@@ -6,7 +6,7 @@
 // lean hardest on the cases where a rule should stay SILENT. A rule that fires
 // on thin evidence is worse than one that never fires: it spends someone's
 // afternoon, or their budget, on a number that was never there.
-import { recommend, buildRecommendations, SEVERITY, BASIS } from '../src/lib/recommend.js';
+import { recommend, buildRecommendations, whatsWorking, SEVERITY, BASIS } from '../src/lib/recommend.js';
 
 let pass = 0; const failures = [];
 function check(name, got, want) {
@@ -213,5 +213,73 @@ console.log('\n── ordering and robustness ──');
     [all.some((r) => r._fallback), recommend(base).length], [true, 1]);
 }
 
-console.log(`\n${pass} passed, ${failures.length} failed`);
-if (failures.length) { console.log('FAILED: ' + failures.join(', ')); process.exit(1); }
+console.log('\n── what is working (strengths) ──');
+{
+  const wIds = (f) => whatsWorking(f).map((r) => r.id);
+  const wHas = (f, id) => wIds(f).includes(id);
+  const wGet = (f, id) => whatsWorking(f).find((r) => r.id === id);
+
+  // base has organic 50000 of 80000 measured = 62.5%, capture 1.0
+  check('strong organic share -> fires', wHas(base, 'organic-strength'), true);
+  check('strengths are severity good', wGet(base, 'organic-strength').severity, SEVERITY.GOOD);
+  check('complete evidence is itself reported', wHas(base, 'evidence-quality'), true);
+
+  const adHeavy = {
+    ...base,
+    attribution: { ...base.attribution, measured_paid_gmv: 60000, measured_organic_gmv: 20000 },
+  };
+  check('mostly-paid shop -> no organic strength', wHas(adHeavy, 'organic-strength'), false);
+
+  const shortCapture = { ...base, attribution: { ...base.attribution, affiliate_capture: 0.76 } };
+  check('incomplete evidence -> no evidence-quality claim', wHas(shortCapture, 'evidence-quality'), false);
+
+  // Momentum needs a measurable trend AND enough rising videos.
+  check('5 rising videos -> momentum fires', wHas(base, 'creative-momentum'), true);
+  const twoRising = { ...base, creative: { ...base.creative, rising_videos: 2 } };
+  check('only 2 rising -> SILENT', wHas(twoRising, 'creative-momentum'), false);
+  const noTrend = { ...base, creative: { ...base.creative, trend_measurable: false } };
+  check('window too short for a trend -> SILENT', wHas(noTrend, 'creative-momentum'), false);
+
+  // Organic creators: the mirror image of the ad-dependence warning.
+  const v = (h, paid, organic) => ({ creator_handle: h, paid_gmv: paid, organic_gmv: organic });
+  const withOrganic = {
+    ...base,
+    videos: [v('a', 100, 9000), v('b', 3000, 3000), v('c', 2500, 2500), v('d', 1000, 900), v('e', 800, 700)],
+  };
+  const oc = wGet(withOrganic, 'organic-creators');
+  check('a creator selling organically at scale -> fires', !!oc, true);
+  check('names that creator', /@a/.test(oc.evidence.join(' ')), true);
+
+  const tinyOrganic = { ...base, videos: [v('a', 0, 20), v('b', 5000, 5000), v('c', 5000, 5000), v('d', 900, 800), v('e', 900, 800)] };
+  check('tiny organic creator -> SILENT (under 3% of revenue)', wHas(tinyOrganic, 'organic-creators'), false);
+
+  // Strong converters mirror the conversion-drag warning.
+  const p = (id, ctor, gmv = 5000) => ({
+    product_id: id, title: id, click_to_order_rate: ctor, clicks: 20000, impressions: 200000, gmv, refunds: 50, refund_rate: 0.01,
+  });
+  const conv = { ...base, products: [p('lo', 0.01), p('mid', 0.02), p('hi', 0.05, 9000)] };
+  const sc = wGet(conv, 'strong-converters');
+  check('a product well above median -> fires', !!sc, true);
+  check('names the best converter', /hi/.test(sc.finding), true);
+
+  const flat = { ...base, products: [p('a', 0.02), p('b', 0.021), p('c', 0.019)] };
+  check('no standout converter -> SILENT', wHas(flat, 'strong-converters'), false);
+  check('too few products -> SILENT', wHas({ ...base, products: [p('a', 0.05)] }, 'strong-converters'), false);
+
+  // Robustness, same contract as the problem rules.
+  check('no facts -> no strengths, no crash', whatsWorking({}).length, 0);
+  check('null collections -> no crash', whatsWorking({ ...base, videos: null, products: null }).length >= 1, true);
+
+  // Strengths are ranked by value, not by rule order.
+  const ranked = whatsWorking(base);
+  check('strengths sorted by money at stake',
+    ranked.every((r, i) => i === 0 || (ranked[i - 1].at_stake ?? 0) >= (r.at_stake ?? 0)), true);
+
+  // A strength must never be reported as a problem, or the counts double up.
+  check('strengths never appear in recommend()',
+    recommend(base).some((r) => wIds(base).includes(r.id)), false);
+}
+
+console.log(`
+${pass} passed, ${failures.length} failed`);
+if (failures.length) { console.log("FAILED: " + failures.join(", ")); process.exit(1); }

@@ -15,7 +15,7 @@ import {
 import Decisions from '../components/Decisions.jsx';
 import { Card, Stat, Note, Skeleton, Empty, Basis, MiniBar, money, moneyExact, pct } from '../components/ui.jsx';
 
-export default function OverviewPage({ shop, start, end, days }) {
+export default function OverviewPage({ shop, start, end, days, onOpenTab }) {
   const cur = shop.currency || 'USD';
   const q = (key, fn) => useQuery({ queryKey: [key, shop.id, start, end], queryFn: fn });
 
@@ -75,6 +75,10 @@ export default function OverviewPage({ shop, start, end, days }) {
       </div>
 
       <RoasCard roas={roasQ.data} loading={roasQ.isLoading} a={a} cur={cur} />
+
+      <HealthStrip
+        creative={creativeQ.data} products={productsQ.data} attribution={a}
+        loading={creativeQ.isLoading || productsQ.isLoading} cur={cur} onOpen={onOpenTab} />
 
       <ChannelChart rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} />
 
@@ -352,4 +356,115 @@ function DataQuality({ shop, attribution, roas }) {
 
   if (!notes.length) return null;
   return <div className="grid" style={{ gap: 10 }}>{notes}</div>;
+}
+
+// ── health at a glance ──────────────────────────────────────────────────────
+// The Overview used to carry attribution and spend only; creative and product
+// health lived on their own tabs, so the decision panel could cite a fatigue
+// number that appeared nowhere on the page the reader was looking at.
+//
+// This puts one headline figure from each layer in front of them, with the
+// status it earns and a way through to the detail. Deliberately three numbers,
+// not thirty — an overview that reproduces every tab is not an overview.
+function HealthStrip({ creative, products, attribution, loading, cur, onOpen }) {
+  if (loading) {
+    return (
+      <div className="grid g3">
+        {[0, 1, 2].map((i) => <div key={i} className="card pad"><Skeleton h={72} /></div>)}
+      </div>
+    );
+  }
+
+  const cards = [];
+
+  // Creative — concentration is the load-bearing number: it is the one a
+  // revenue chart cannot show.
+  if (creative && Number(creative.video_count) > 0) {
+    const top5 = creative.top5_share == null ? null : Number(creative.top5_share);
+    const gmv = Number(creative.gmv) || 0;
+    const fatShare = gmv ? Number(creative.fatigued_gmv) / gmv : null;
+    const tone = top5 == null ? 'ok' : top5 >= 0.5 ? 'bad' : top5 >= 0.35 ? 'warn' : 'ok';
+    cards.push({
+      tab: 'creative',
+      k: 'Creative',
+      v: pct(top5, 0),
+      label: 'of revenue in the top 5 videos',
+      tone,
+      lines: [
+        `${Number(creative.video_count).toLocaleString()} videos · ${Number(creative.creators || 0).toLocaleString()} creators`,
+        creative.trend_measurable === false
+          ? 'trend needs a 14-day window'
+          : `${creative.fatigued_videos} fading${fatShare != null ? ` (${pct(fatShare, 0)})` : ''} · ${creative.rising_videos} rising`,
+      ],
+    });
+  }
+
+  // Products — conversion is where an ads problem and a listing problem get
+  // told apart.
+  const ps = (products || []).filter((p) => p.click_to_order_rate != null);
+  if (ps.length >= 3) {
+    const rates = ps.map((p) => Number(p.click_to_order_rate)).sort((x, y) => x - y);
+    const median = rates[Math.floor(rates.length / 2)];
+    const weak = ps.filter((p) => Number(p.click_to_order_rate) < median * 0.6).length;
+    const totalGmv = ps.reduce((x, p) => x + (Number(p.gmv) || 0), 0);
+    const totalRef = ps.reduce((x, p) => x + (Number(p.refunds) || 0), 0);
+    const refRate = totalGmv ? totalRef / totalGmv : null;
+    cards.push({
+      tab: 'products',
+      k: 'Products',
+      v: median == null ? '—' : `${(median * 100).toFixed(2)}%`,
+      label: 'median click → order',
+      tone: weak > 0 ? 'warn' : 'ok',
+      lines: [
+        `${ps.length} products with traffic`,
+        `${weak} converting far below · ${pct(refRate, 1)} refunded`,
+      ],
+    });
+  }
+
+  // Evidence quality — how much of everything else can be believed.
+  if (attribution) {
+    const cap = attribution.affiliate_capture == null ? null : Number(attribution.affiliate_capture);
+    const cov = attribution.attribution_coverage == null ? null : Number(attribution.attribution_coverage);
+    cards.push({
+      tab: null,
+      k: 'Evidence',
+      v: pct(cap, 0),
+      label: 'of affiliate revenue has order lines',
+      tone: cap == null ? 'ok' : cap < 0.85 ? 'bad' : cap < 0.95 ? 'warn' : 'ok',
+      lines: [
+        `${pct(cov, 0)} of the shop carries a commission signal`,
+        cap != null && cap < 0.95
+          ? 'the split describes that portion, not the shop'
+          : 'the split describes nearly all affiliate revenue',
+      ],
+    });
+  }
+
+  if (!cards.length) return null;
+
+  const colour = { ok: 'var(--success)', warn: 'var(--warning)', bad: 'var(--danger)' };
+
+  return (
+    <div className="grid g3">
+      {cards.map((c) => (
+        <div key={c.k} className="card pad">
+          <div className="k" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {c.k}
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: colour[c.tone] }} />
+            {c.tab && onOpen && (
+              <button className="lnk" style={{ marginLeft: 'auto' }} onClick={() => onOpen(c.tab)}>
+                View →
+              </button>
+            )}
+          </div>
+          <div className="v" style={{ color: c.tone === 'ok' ? undefined : colour[c.tone] }}>{c.v}</div>
+          <div className="sub">{c.label}</div>
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            {c.lines.map((l, i) => <div key={i}>{l}</div>)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
