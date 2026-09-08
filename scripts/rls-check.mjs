@@ -27,7 +27,7 @@ const newAnon = () => createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON
 const REVENUE_TABLES = [
   'affiliate_order_lines', 'shops', 'shop_daily_channels', 'video_performance',
   'product_catalog', 'product_daily_metrics',
-  'gmv_max_campaigns', 'gmv_max_daily_metrics', 'gmv_max_settings_changes',
+  'gmv_max_campaigns', 'gmv_max_daily_metrics', 'gmv_max_settings_changes', 'outreach_actions',
 ];
 
 const REVENUE_FUNCTIONS = (shopId) => [

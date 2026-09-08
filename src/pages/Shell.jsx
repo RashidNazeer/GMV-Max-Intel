@@ -12,6 +12,7 @@ import OverviewPage from './OverviewPage.jsx';
 import CreativePage from './CreativePage.jsx';
 import ProductsPage from './ProductsPage.jsx';
 import CampaignsPage from './CampaignsPage.jsx';
+import OutreachPage from './OutreachPage.jsx';
 import { Note, Skeleton, Empty } from '../components/ui.jsx';
 
 const RANGES = [
@@ -27,6 +28,10 @@ const TABS = [
   { id: 'creative',  label: 'Creative',  Page: CreativePage },
   { id: 'products',  label: 'Products',  Page: ProductsPage },
   { id: 'campaigns', label: 'Campaigns', Page: CampaignsPage },
+  // Boss-only: the one tab that can act outside this app. Hidden entirely for
+  // other roles, and the edge function re-checks the role regardless — a tab
+  // that is merely not rendered is not a permission.
+  { id: 'outreach',  label: 'Outreach',  Page: OutreachPage, bossOnly: true },
 ];
 
 export default function Shell({ session, profile }) {
@@ -49,7 +54,8 @@ export default function Shell({ session, profile }) {
     || shops.find((s) => Number(s.lines) > 0)
     || shops[0];
 
-  const Page = TABS.find((t) => t.id === tab)?.Page ?? OverviewPage;
+  const visibleTabs = TABS.filter((t) => !t.bossOnly || profile?.role === 'boss');
+  const Page = visibleTabs.find((t) => t.id === tab)?.Page ?? OverviewPage;
 
   const shopForPage = active && {
     id: active.shop_id,
@@ -63,7 +69,7 @@ export default function Shell({ session, profile }) {
       <div className="topbar">
         <div className="brand">GMV Intelligence <span>what your ads actually drove</span></div>
         <nav className="nav" style={{ marginLeft: 18 }}>
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)} aria-current={tab === t.id ? 'page' : undefined}>
               {t.label}
             </button>

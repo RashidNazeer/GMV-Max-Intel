@@ -107,6 +107,63 @@ export async function syncRuns(shopId, limit = 8) {
   return data || [];
 }
 
+// ── outreach ────────────────────────────────────────────────────────────────
+
+export const creatorGrowth = (shopId, end, opts = {}) =>
+  rpc('shop_creator_growth', {
+    p_shop_id: shopId,
+    p_end: end,
+    p_window_days: opts.windowDays ?? 30,
+    p_min_growth: opts.minGrowth ?? 2,
+    p_max_gmv: opts.maxGmv ?? null,
+    p_min_gmv: opts.minGmv ?? 0,
+    p_include_new: opts.includeNew ?? false,
+    p_limit: opts.limit ?? 500,
+  });
+
+export async function productCatalog(shopId) {
+  const { data, error } = await supabase
+    .from('product_catalog')
+    .select('product_id, title, min_price, max_price, inventory, commission_rate')
+    .eq('shop_id', shopId)
+    .order('title');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function outreachLog(shopId, limit = 30) {
+  const { data, error } = await supabase
+    .from('outreach_actions')
+    .select('id, action, detail, succeeded, actor_email, started_at, finished_at')
+    .eq('shop_id', shopId)
+    .order('started_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+/**
+ * Everything that can WRITE to Reacher goes through one edge function.
+ *
+ * The Reacher key is account-wide and can create automations that message
+ * thousands of creators, so it lives as a function secret and never in this
+ * bundle. The function re-checks the caller is the Boss, clamps recipient and
+ * rate limits server-side, and writes an audit row before it acts — none of
+ * which a browser could be trusted to do.
+ */
+export async function outreach(body) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('not signed in');
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/outreach`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok && json?.error) return { ok: false, status: res.status, ...json };
+  return json;
+}
+
 // ── formatting ──────────────────────────────────────────────────────────────
 export const money = (n, currency = 'USD') =>
   n == null ? '—' : new Intl.NumberFormat('en-US', {
