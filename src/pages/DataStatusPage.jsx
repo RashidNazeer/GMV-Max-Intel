@@ -9,14 +9,30 @@
 //
 // The other thing it replaces: three stacked banners on the Overview. Health
 // lives in one control, and this is what that control opens.
+//
+// ── WHAT THE REDESIGN CHANGED ──────────────────────────────────────────────
+// The four health figures are ONE metric region rather than four cards, with a
+// single provenance indicator; only the ad spend source carries its own tag,
+// because it is the one basis that genuinely differs. The per-source recovery
+// steps moved out of a five-column table cell into a drawer, so the table stays
+// scannable and the instruction gets room to be a paragraph. And the provider
+// gap list is now this page's own section with id="fields", so Products and
+// Creatives can link to /data#fields instead of restating it and drifting.
+//
+// The reconciliation figure keeps its "checking…" state: "all days add up" is a
+// CLAIM, and it was previously printed while the check was still running.
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   syncRuns, shopReconciliation, shopAttribution, shopProductStats, shopPaidRoas,
-  moneyExact, pct,
+  moneyExact, pct, numOrNull,
 } from '../lib/api.js';
-import { Card, Stat, Note, Skeleton, Basis, Hint } from '../components/ui.jsx';
+import ReportToolbar from '../components/ReportToolbar.jsx';
+import {
+  Panel, PageHeader, MetricSummary, Notice, Drawer, useDrawer,
+  Skeleton, EmptyState, SourceTag,
+} from '../components/ui.jsx';
 
 /**
  * A sync job, in the buyer's language, with the action that actually resolves
@@ -80,9 +96,12 @@ function explain(run) {
   };
 }
 
+const when = (t) => (t ? new Date(t).toLocaleString() : '—');
+
 export default function DataStatusPage() {
   const { shop, scope, profile } = useOutletContext();
   const [diag, setDiag] = useState(false);
+  const jobDrawer = useDrawer();
   const cur = shop.currency || 'USD';
   const canSeeDiagnostics = profile?.role === 'boss' || profile?.role === 'ol';
 
@@ -111,54 +130,133 @@ export default function DataStatusPage() {
   const a = attrQ.data;
   const recon = reconQ.data;
   const s = statsQ.data;
+  const roas = roasQ.data;
+  const capture = numOrNull(a?.affiliate_capture);
+
+  // Which checks could not be read at all. A failed query is not a clean bill
+  // of health, and a dash with no reason beside it reads like one.
+  const unreadable = [
+    attrQ.error && 'coverage',
+    reconQ.error && 'reconciliation',
+    roasQ.error && 'ad spend',
+    statsQ.error && 'the product catalogue',
+  ].filter(Boolean);
+
+  const metrics = [
+    {
+      label: 'Attribution coverage',
+      value: pct(a?.attribution_coverage, 0),
+      // A dash needs a reason beside it. Without this branch a failed query
+      // printed "—" under a caption that reads like a successful reading.
+      context: attrQ.isLoading ? 'checking…'
+        : a == null ? 'attribution could not be read for this window'
+          : 'of shop GMV carries a commission signal',
+      hint: 'The share of total shop GMV where a commission programme says what drove the sale. The rest is not unattributed by choice — no signal exists for it.',
+    },
+    {
+      label: 'Affiliate capture',
+      value: pct(a?.affiliate_capture, 1),
+      tone: capture != null && (capture > 1.02 || capture < 0.85) ? 'neg' : '',
+      context: attrQ.isLoading ? 'checking…'
+        : capture == null ? 'no affiliate figure to compare against'
+          : capture > 1 ? 'we hold more than the source reports'
+            : 'of Seller Center’s affiliate figure',
+      hint: 'Our stored affiliate order lines as a share of Seller Center’s own affiliate figure for the same days. It is deliberately not clamped: above 100% means the two sources are measuring on different bases, which is the alarm.',
+    },
+    {
+      // "all days add up" is a CLAIM. While recon was still loading it was
+      // printed anyway, so the page asserted a clean reconciliation it had not
+      // checked yet — caught by a mid-load screenshot.
+      label: 'Days reconciled',
+      value: recon ? `${recon.days_reconciled} / ${recon.days}` : '—',
+      tone: recon?.days_exception ? 'neg' : '',
+      context: reconQ.isLoading ? 'checking…'
+        : !recon ? 'no daily rows for this window'
+          : recon.days_exception ? `${recon.days_exception} days do not add up`
+            : 'all days add up',
+      hint: 'Measured per day. A window can net to zero while most days are wrong in opposite directions, which is why this is not a window-level check.',
+    },
+    {
+      label: 'Ad spend source',
+      value: roasQ.isLoading ? '—' : roas ? (roas.is_simulated ? 'Demo' : 'Measured') : 'None',
+      source: roas ? (roas.is_simulated ? 'simulated' : 'measured') : undefined,
+      context: roasQ.isLoading ? 'checking…'
+        : roas ? `${roas.days_with_spend} days with spend`
+          : 'ad account not connected',
+      hint: 'Source type is not health. A measured source can still be incomplete, and a simulated one can still be internally consistent.',
+    },
+  ];
+
+  const openRun = jobDrawer.openId ? latest.get(jobDrawer.openId) : null;
+  const openMeta = jobDrawer.openId
+    ? (JOB_MEANING[jobDrawer.openId] || { label: jobDrawer.openId, why: '' })
+    : null;
+  const openWhy = openRun ? explain(openRun) : null;
 
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <div className="grid g4">
-        <Stat k="Attribution coverage" basis="measured" v={pct(a?.attribution_coverage, 0)}
-          sub="of shop GMV carries a commission signal"
-          hint="The share of total shop GMV where a commission programme says what drove the sale. The rest is not unattributed by choice — no signal exists for it." />
-        <Stat k="Affiliate capture" basis="measured" v={pct(a?.affiliate_capture, 1)}
-          tone={a && (Number(a.affiliate_capture) > 1.02 || Number(a.affiliate_capture) < 0.85) ? 'danger' : undefined}
-          sub={a && Number(a.affiliate_capture) > 1 ? 'we hold MORE than the source reports' : 'of Seller Center’s affiliate figure'} />
-        {/* "all days add up" is a CLAIM. While recon is still loading it was
-            printed anyway, so the page asserted a clean reconciliation it had
-            not checked yet — caught by a mid-load screenshot. */}
-        <Stat k="Days reconciled" basis="measured"
-          tone={recon?.days_exception ? 'danger' : undefined}
-          v={recon ? `${recon.days_reconciled} / ${recon.days}` : '—'}
-          sub={reconQ.isLoading || !recon ? 'checking…'
-            : recon.days_exception ? `${recon.days_exception} days do not add up`
-            : 'all days add up'}
-          hint="Measured per day. A window can net to zero while most days are wrong in opposite directions, which is why this is not a window-level check." />
-        <Stat k="Ad spend source"
-          basis={roasQ.data ? (roasQ.data.is_simulated ? 'simulated' : 'measured') : undefined}
-          v={roasQ.data ? (roasQ.data.is_simulated ? 'Demo' : 'Measured') : 'None'}
-          sub={roasQ.data ? `${roasQ.data.days_with_spend} days with spend` : 'ad account not connected'}
-          hint="Source type is not health. A measured source can still be incomplete, and a simulated one can still be internally consistent." />
-      </div>
+    <>
+      <PageHeader
+        title="Data status"
+        sub={`${shop.shop_name} · ${scope.start} → ${scope.end}`}
+        right={<ReportToolbar scope={scope} shop={shop} />}
+      />
 
-      {roasQ.data?.is_simulated && (
-        <Note tone="warn">
-          <div>
-            <strong>Ad spend for this shop is simulated.</strong> Revenue is measured from real orders;
-            spend and GMV Max&rsquo;s reported figures are generated so the comparison can be demonstrated
-            while the ad account is unconnected. Every figure derived from spend carries a
-            <span className="basis basis-simulated" style={{ margin: '0 4px' }}>simulated</span> badge, and
-            simulated rows never enter the model history for a measured shop — a database trigger refuses
-            to let one shop hold both.
-          </div>
-        </Note>
+      {unreadable.length > 0 && (
+        <Notice tone="error">
+          The checks for {unreadable.join(', ')} could not be read, so the figures below are missing
+          rather than clean. Reload the page, and if it persists an administrator should look at the
+          database connection.
+        </Notice>
       )}
 
-      <Card title="Sources" pad={false}
-        sub="What each source feeds, when it last succeeded, and what to do when it has not.">
-        {runsQ.isLoading ? <div className="pad"><Skeleton h={180} /></div> : (
-          <div className="scroll">
-            <table>
+      <MetricSummary items={metrics} source="measured" loading={attrQ.isLoading} />
+
+      {recon?.days_exception > 0 && (
+        <Notice tone="warn">
+          <strong>{recon.days_exception} of {recon.days} days do not reconcile.</strong> The absolute
+          error across the window is {moneyExact(recon.abs_gap_total, cur)}, netting to{' '}
+          {moneyExact(recon.net_gap_total, cur)} — which is how a window-level check can report perfect
+          agreement over days that disagree. Worst day {recon.worst_day},{' '}
+          {moneyExact(recon.worst_gap, cur)}.
+        </Notice>
+      )}
+
+      {roas?.is_simulated && (
+        <Notice tone="warn">
+          <strong>Ad spend for this shop is simulated.</strong> Revenue is measured from real orders;
+          spend and GMV Max&rsquo;s reported figures are generated so the comparison can be demonstrated
+          while the ad account is unconnected. Every figure derived from spend carries a{' '}
+          <SourceTag kind="simulated" /> tag, and simulated rows never enter the model history for a
+          measured shop — a database trigger refuses to let one shop hold both.
+        </Notice>
+      )}
+
+      <Panel
+        title="Sources"
+        sub="What each source feeds, when it last ran, and what to do when it has not finished."
+        bodyPad={false}
+      >
+        {runsQ.isLoading ? (
+          <div className="panel-body"><Skeleton h={180} /></div>
+        ) : runsQ.error ? (
+          <div className="panel-body">
+            <Notice tone="error">The sync history could not be read: {runsQ.error.message}</Notice>
+          </div>
+        ) : !latest.size ? (
+          <EmptyState title="No sync has been recorded for this shop yet">
+            Nothing has been collected for {shop.shop_name}, so every figure on the other tabs is
+            absent rather than zero. Starting the first sync is an administrator task.
+          </EmptyState>
+        ) : (
+          <div className="tablewrap">
+            <table className="data">
               <thead>
                 <tr>
-                  <th>Source</th><th>State</th><th>Last success</th><th className="num">Rows</th><th>What it means</th>
+                  <th className="sticky-l">Source</th>
+                  <th>State</th>
+                  <th>Last run</th>
+                  <th className="num">Rows</th>
+                  <th>What it means</th>
                 </tr>
               </thead>
               <tbody>
@@ -168,125 +266,229 @@ export default function DataStatusPage() {
                   const ex = ok ? null : explain(r);
                   return (
                     <tr key={job}>
-                      <td className="tight">
-                        <strong>{meta.label}</strong>
-                        <div className="muted" style={{ fontSize: 11.5 }}>{meta.why}</div>
+                      <td className="sticky-l">
+                        <div><strong>{meta.label}</strong></div>
+                        {meta.why && <div className="meta">{meta.why}</div>}
                       </td>
-                      <td className="tight">
-                        <span className={`chip chip-${ok ? 'ok' : 'bad'}`}>{ok ? 'Healthy' : 'Action required'}</span>
+                      <td>
+                        <span className={`status status-${ok ? 'ok' : 'bad'}`}>
+                          {ok ? 'Healthy' : 'Action required'}
+                        </span>
                       </td>
-                      <td className="tight muted">
-                        {r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                      <td className="muted">{when(r.started_at)}</td>
+                      <td className="num muted">
+                        {r.rows_written == null ? '—' : Number(r.rows_written).toLocaleString()}
                       </td>
-                      <td className="num tight muted">{r.rows_written ?? '—'}</td>
-                      <td className="tight">
-                        {ok
-                          ? <span className="muted">Covering {r.window_start} → {r.window_end}</span>
-                          : (
-                            <div>
-                              <div>{ex.plain}</div>
-                              <div style={{ marginTop: 4 }}><strong>Next:</strong> {ex.action}</div>
-                            </div>
-                          )}
+                      <td>
+                        {ok ? (
+                          <span className="muted">
+                            Covering {r.window_start || '—'} → {r.window_end || '—'}
+                          </span>
+                        ) : (
+                          <div className="row" style={{ flexWrap: 'nowrap' }}>
+                            <span style={{ minWidth: 0 }}>{ex.plain}</span>
+                            <button className="btn btn-sm" style={{ flex: '0 0 auto' }}
+                              onClick={() => jobDrawer.open(job)}>
+                              What to do
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
-                {!latest.size && (
-                  <tr><td colSpan={5} className="muted" style={{ padding: 20 }}>
-                    No sync has been recorded for this shop yet.
-                  </td></tr>
-                )}
               </tbody>
             </table>
           </div>
         )}
-      </Card>
+      </Panel>
 
-      <Card title="Fields the provider does not supply"
-        sub="Named exactly, so the missing capability is a request rather than a mystery.">
-        <table className="plain">
-          <tbody>
-            <tr>
-              <td style={{ width: 210 }}><code>discount_pct</code>, <code>original_price</code></td>
-              <td>
-                Null on every product and SKU. Without a reference price there is no discount depth, no
-                effective price and no seller-funded versus TikTok-funded split — so the whole commercial
-                comparison is unavailable rather than zero.
-              </td>
-            </tr>
-            <tr>
-              <td>GMV Max revenue by surface</td>
-              <td>
-                Reacher exposes spend by surface but not revenue by surface. That single addition would
-                close the floor-to-ceiling band instead of leaving its width unexplained.
-              </td>
-            </tr>
-            <tr>
-              <td>Per-video spend and impressions</td>
-              <td>
-                Not available at creative level, so cost per order per video cannot be computed and
-                "continuing exposure" cannot be tested — which is why a revenue drop is labelled
-                Declining GMV rather than fatigue.
-              </td>
-            </tr>
-            <tr>
-              <td>Campaign settings and change feed</td>
-              <td>
-                <code>/settings</code> returns nulls and <code>/changes</code> returns empty, so no history
-                exists before our own snapshots began on 8 September 2026. That absence is preserved as a
-                state; it is not reconstructed.
-              </td>
-            </tr>
-            <tr>
-              <td>Partner-tab affiliate orders</td>
-              <td>
-                Reacher&rsquo;s transactions feed covers the Creator tab only. Agency-run Partner campaigns
-                are being added with a field distinguishing the two — confirmed 8 September 2026.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </Card>
+      {/* The home for provider gaps. The anchor exists so Products and Creatives
+          can link to /data#fields rather than restating any of this and drifting
+          from it — those links are not in place on every page yet. */}
+      <section id="fields" style={{ scrollMarginTop: 'calc(var(--header-h) + var(--s4))' }}>
+        <Panel
+          title="Fields the provider does not supply"
+          sub="Named exactly, so the missing capability is a request rather than a mystery. Each one is a value that is unavailable, never a zero."
+          bodyPad={false}
+        >
+          <div className="tablewrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th className="sticky-l">Field or capability</th>
+                  <th>What its absence means for the numbers</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="sticky-l" style={{ width: 240 }}>
+                    <code>discount_pct</code>, <code>original_price</code>
+                  </td>
+                  <td>
+                    Null on every product and SKU. Without a reference price there is no discount depth, no
+                    effective price and no seller-funded versus TikTok-funded split — so the whole commercial
+                    comparison is unavailable rather than zero.
+                    {s && (
+                      <div className="meta" style={{ marginTop: 4 }}>
+                        {s.discount_available
+                          ? `Checked for ${shop.shop_name}: at least one catalogue product does carry a discount percentage, so the comparison is possible here.`
+                          : numOrNull(s.catalog_products)
+                            ? `Checked for ${shop.shop_name}: none of the ${Number(s.catalog_products).toLocaleString()} catalogue products carries a discount percentage.`
+                            : `No catalogue has been collected for ${shop.shop_name} yet, so there is nothing to check this against.`}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">GMV Max revenue by surface</td>
+                  <td>
+                    Reacher exposes spend by surface but not revenue by surface. That single addition would
+                    close the floor-to-ceiling band instead of leaving its width unexplained.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">Per-video spend and impressions</td>
+                  <td>
+                    Not available at creative level, so cost per order per video cannot be computed and
+                    &ldquo;continuing exposure&rdquo; cannot be tested — which is why a revenue drop is
+                    labelled Declining GMV rather than fatigue.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">Campaign settings and change feed</td>
+                  <td>
+                    <code>/settings</code> returns nulls and <code>/changes</code> returns empty, so no history
+                    exists before our own snapshots began on 8 September 2026. That absence is preserved as a
+                    state; it is not reconstructed.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">Partner-tab affiliate orders</td>
+                  <td>
+                    Reacher&rsquo;s transactions feed covers the Creator tab only. Agency-run Partner campaigns
+                    are being added with a field distinguishing the two — confirmed 8 September 2026.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">Seller Center funnel for affiliate-only products</td>
+                  <td>
+                    Impressions, clicks and conversion arrive only for products the funnel feed covers. A
+                    product with affiliate orders but no funnel row has unknown traffic, not zero, so it is
+                    left out of the product counters rather than counted as a product that sold nothing.
+                    {s?.products_affiliate_only > 0 && (
+                      <div className="meta" style={{ marginTop: 4 }}>
+                        {Number(s.products_affiliate_only).toLocaleString()} product(s) are in that state for
+                        this window.
+                      </div>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="sticky-l">Video cover images</td>
+                  <td>
+                    The video feed carries no cover or thumbnail URL, so every creative shows the same neutral
+                    placeholder. Cosmetic only — no figure depends on it — and it is named here so a blank
+                    tile is not read as a broken image.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </section>
 
       {canSeeDiagnostics && (
-        <Card title="Diagnostics"
-          right={<button className="btn" onClick={() => setDiag((v) => !v)}>{diag ? 'Hide' : 'Show'}</button>}
-          sub="Endpoint names, job internals and raw errors. Not part of the buyer workflow.">
-          {diag && (
-            <div className="scroll">
-              <table>
-                <thead><tr><th>Job</th><th>Status</th><th>Window</th><th className="num">Rows</th><th>Raw error</th></tr></thead>
-                <tbody>
-                  {runs.map((r, i) => (
-                    <tr key={i}>
-                      <td className="tight"><code>{r.job}</code></td>
-                      <td className="tight">{r.status}</td>
-                      <td className="tight muted">{r.window_start} → {r.window_end}</td>
-                      <td className="num tight muted">{r.rows_written ?? '—'}</td>
-                      <td className="tight muted" style={{ maxWidth: 400 }}>
-                        <span className="truncate" style={{ display: 'block' }} title={r.error || ''}>{r.error || '—'}</span>
-                      </td>
+        <Panel
+          title="Diagnostics"
+          sub="Endpoint names, job internals and raw errors. Not part of the buyer workflow."
+          right={
+            <button className="btn btn-sm" onClick={() => setDiag((v) => !v)} aria-expanded={diag}>
+              {diag ? 'Hide' : 'Show'}
+            </button>
+          }
+          bodyPad={false}
+        >
+          {diag ? (
+            runs.length ? (
+              <div className="tablewrap">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th className="sticky-l">Job</th>
+                      <th>Status</th>
+                      <th>Window</th>
+                      <th className="num">Rows</th>
+                      <th>Raw error</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                  </thead>
+                  <tbody>
+                    {runs.map((r, i) => (
+                      <tr key={`${r.job}-${r.started_at}-${i}`}>
+                        <td className="sticky-l"><code>{r.job}</code></td>
+                        <td className="muted">{r.status}</td>
+                        <td className="muted">{r.window_start || '—'} → {r.window_end || '—'}</td>
+                        <td className="num muted">
+                          {r.rows_written == null ? '—' : Number(r.rows_written).toLocaleString()}
+                        </td>
+                        <td className="muted" style={{ maxWidth: 400 }}>
+                          <span className="truncate" style={{ display: 'block' }} title={r.error || ''}>
+                            {r.error || '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="panel-body">
+                <p className="muted" style={{ margin: 0 }}>No sync runs are stored for this shop.</p>
+              </div>
+            )
+          ) : null}
+        </Panel>
       )}
 
-      {recon?.days_exception > 0 && (
-        <Note tone="warn">
-          <div>
-            <strong>{recon.days_exception} of {recon.days} days do not reconcile.</strong> The absolute
-            error across the window is {moneyExact(recon.abs_gap_total, cur)}, netting to{' '}
-            {moneyExact(recon.net_gap_total, cur)} — which is how a window-level check can report perfect
-            agreement over days that disagree. Worst day {recon.worst_day},{' '}
-            {moneyExact(recon.worst_gap, cur)}.
+      <Drawer
+        open={!!openRun}
+        onClose={jobDrawer.close}
+        title={openMeta?.label || 'Source'}
+        sub="This source has not finished collecting."
+      >
+        {openRun && (
+          <div className="stack">
+            {openMeta?.why && <p style={{ margin: 0 }}>{openMeta.why}</p>}
+
+            <Notice tone="warn">{openWhy.plain}</Notice>
+
+            <div>
+              <h3 className="section-title">What to do next</h3>
+              <p style={{ margin: '4px 0 0' }}>{openWhy.action}</p>
+            </div>
+
+            <dl className="dl">
+              <dt>Who can do it</dt>
+              <dd>An {openWhy.who}. Nothing on this page changes it for you.</dd>
+              <dt>Window attempted</dt>
+              <dd>{openRun.window_start || '—'} → {openRun.window_end || '—'}</dd>
+              <dt>Last attempt</dt>
+              <dd>{when(openRun.started_at)}</dd>
+              <dt>Rows written</dt>
+              <dd>{openRun.rows_written == null ? '—' : Number(openRun.rows_written).toLocaleString()}</dd>
+            </dl>
+
+            {canSeeDiagnostics && openRun.error && (
+              <details>
+                <summary>Raw error from the provider</summary>
+                <p className="mono" style={{ margin: '8px 0 0', overflowWrap: 'anywhere' }}>
+                  {openRun.error}
+                </p>
+              </details>
+            )}
           </div>
-        </Note>
-      )}
-    </div>
+        )}
+      </Drawer>
+    </>
   );
 }

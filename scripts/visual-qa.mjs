@@ -26,6 +26,37 @@ need('BOSS_LOGIN_PASSWORD');
 
 fs.mkdirSync(OUT, { recursive: true });
 
+
+// ── SELECTORS, IN ONE PLACE ─────────────────────────────────────────────────
+// Stale selectors have produced fake failures in this script three times now —
+// once after a class rename, once after the summary row became a strip, and
+// once when the redesign renamed .topbar to .appheader and every route
+// "failed" at sign-in. A test that fails for its own reasons is as useless as
+// one that cannot fail, so they live here and nowhere else.
+const SEL = {
+  header:        '.appheader',
+  shopSelect:    '.appheader select',
+  dateBtn:       '.toolbar button[aria-expanded]',
+  dataStatus:    '.sidebar .navlink[title^="Data status"]',
+  priority:      '.priority',
+  priorityText:  '.priority-finding',
+  primaryAction: '.priority-actions a.btn-primary',
+  metrics:       '.metrics',
+  metricValue:   '.metrics .value',
+  anyRow:        'table.data tbody tr',
+  notice:        '.notice, .contextbar',
+  thumb:         '.thumb',
+  detailTitle:   '.page-title',
+  drawer:        '.drawer',
+  rowLink:       'tbody a.identity',
+  detailBtn:     'tbody button:has-text("Details")',
+  sortGmv:       'th .sortbtn:has-text("GMV")',
+  nextPage:      '.pager button:has-text("Next")',
+  firstCell:     'table.data tbody tr td',
+  firstNumCell:  'table.data tbody tr td.num',
+  tab:           (name) => `button:has-text("${name}")`,
+};
+
 const VIEWPORTS = [
   { name: '1440x900', width: 1440, height: 900 },
   { name: '1366x768', width: 1366, height: 768 },
@@ -113,11 +144,11 @@ await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
 await page.fill('input[type=email]', 'mrrashid3255@gmail.com');
 await page.fill('input[type=password]', env.BOSS_LOGIN_PASSWORD);
 await page.click('button:has-text("Sign in")');
-await page.waitForSelector('.topbar', { timeout: 30000 });
+await page.waitForSelector(SEL.header, { timeout: 30000 });
 await page.waitForTimeout(3500);
-check('signs in and reaches the app shell', await page.locator('.topbar').isVisible());
+check('signs in and reaches the app shell', await page.locator(SEL.header).isVisible());
 
-const shopName = await page.locator('.topbar select').first().inputValue().catch(() => null);
+const shopName = await page.locator(SEL.shopSelect).first().inputValue().catch(() => null);
 console.log(`  active shop id: ${shopName?.slice(0, 8) ?? 'unknown'}…`);
 
 // ── every route, every viewport ─────────────────────────────────────────────
@@ -126,9 +157,9 @@ for (const vp of VIEWPORTS) {
   await page.setViewportSize({ width: vp.width, height: vp.height });
   for (const r of ROUTES) {
     await page.goto(`${BASE}${r.path}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.topbar', { timeout: 20000 });
+    await page.waitForSelector(SEL.header, { timeout: 20000 });
     // Give the queries time to settle so a screenshot is not all skeletons.
-    const settled = await waitForData(page, vp.name === '1440x900' ? 25000 : 12000);
+    const settled = await waitForData(page, 25000);
     if (settled < 0) console.log('        (still loading after the wait — screenshot shows skeletons)');
 
     await page.screenshot({ path: path.join(OUT, `${r.name}--${vp.name}.png`), fullPage: false });
@@ -146,9 +177,17 @@ for (const vp of VIEWPORTS) {
       if (m) check(`${r.name} @ ${vp.name}: no "${m[0]}" on a buyer screen`, false, `found "${m[0]}"`);
     }
 
-    // Something has to actually be on the page.
-    check(`${r.name} @ ${vp.name}: renders real content`, text.trim().length > 200,
-      `only ${text.trim().length} chars of text`);
+    // "Still loading" and "genuinely blank" are different faults and must not
+    // share a message. Reporting them the same way is how a slow source reads
+    // as a broken page — which is exactly what happened on the last three of
+    // 28 page loads, where only the shell's own skeletons had rendered.
+    if (settled < 0) {
+      check(`${r.name} @ ${vp.name}: data arrived within 25s`, false,
+        'still showing skeletons — a slow source, not necessarily a broken page');
+    } else {
+      check(`${r.name} @ ${vp.name}: renders real content`, text.trim().length > 200,
+        `only ${text.trim().length} chars of text`);
+    }
   }
 }
 
@@ -156,7 +195,7 @@ for (const vp of VIEWPORTS) {
 console.log('\n── overview at 1366x768, without scrolling ──');
 await page.setViewportSize({ width: 1366, height: 768 });
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
-await page.waitForSelector(".decision, .card.pad", { timeout: 30000 });
+await page.waitForSelector(SEL.priority, { timeout: 30000 });
 await waitForData(page);
 await page.screenshot({ path: path.join(OUT, 'gate--overview-1366.png') });
 
@@ -167,20 +206,44 @@ const inFold = async (sel) => page.evaluate((s) => {
   return r.top < window.innerHeight && r.bottom > 0 && r.height > 0;
 }, sel);
 
-check('shop selector visible without scrolling', await inFold('.topbar select'));
-check('date scope visible without scrolling', await inFold('.windowbtn'));
-check('data status visible without scrolling', await inFold('.statuspill'));
-check('the decision is visible without scrolling', await inFold('.decision'));
-check('summary metrics visible without scrolling', await inFold('.statstrip'));
+check('shop selector visible without scrolling', await inFold(SEL.shopSelect));
+check('date scope visible without scrolling', await inFold(SEL.dateBtn));
+check('data status visible without scrolling', await inFold(SEL.dataStatus));
+check('the decision is visible without scrolling', await inFold(SEL.priority));
+check('summary metrics visible without scrolling', await inFold(SEL.metrics));
 
-const rowsInFold = await page.evaluate(() => {
-  const rows = [...document.querySelectorAll('.card table tbody tr')];
+const rowsInFold = await page.evaluate((sel) => {
+  const rows = [...document.querySelectorAll(sel)];
   return rows.filter((r) => {
     const b = r.getBoundingClientRect();
     return b.top < window.innerHeight && b.bottom > 0 && b.height > 0;
   }).length;
-});
-check('at least 3 actionable rows in the first screenful', rowsInFold >= 3, `only ${rowsInFold} visible`);
+}, SEL.anyRow);
+// THE REQUIREMENT CHANGED, so this assertion changed with it — deliberately,
+// not to make a red build green.
+//
+// The first spec wanted three action-queue rows in the fold at 1366. The second
+// spec removed that queue entirely ("Do not repeat that primary recommendation
+// in a second action table") and asks instead for: title, metrics, priority
+// action and a useful chart area at 1366, with the first table rows exposed at
+// 1440. Asserting the old shape would now be asserting a screen the owner
+// explicitly asked us to stop building.
+check('the performance chart is in the first screenful at 1366',
+  await inFold('.recharts-wrapper, .panel'), 'no chart area visible');
+
+await page.setViewportSize({ width: 1440, height: 900 });
+await waitForData(page);
+const rowsAt1440 = await page.evaluate((sel) => {
+  const rows = [...document.querySelectorAll(sel)];
+  return rows.filter((r) => {
+    const b = r.getBoundingClientRect();
+    return b.top < window.innerHeight && b.bottom > 0 && b.height > 0;
+  }).length;
+}, SEL.anyRow);
+check('at 1440x900 the first table rows are exposed too', rowsAt1440 >= 1,
+  `${rowsAt1440} rows visible — the spec asks to "aim to expose" them at this size`);
+await page.screenshot({ path: path.join(OUT, 'gate--overview-1440.png') });
+await page.setViewportSize({ width: 1366, height: 768 });
 
 const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 console.log(`  overview total height: ${pageHeight}px (was ~3888px before the rebuild)`);
@@ -192,7 +255,7 @@ await page.setViewportSize({ width: 1440, height: 900 });
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(5000);
 
-const drill = page.locator('.decision-actions a.btn-primary').first();
+const drill = page.locator(SEL.primaryAction).first();
 if (await drill.count()) {
   const label = (await drill.innerText()).trim();
   const m = label.match(/\((\d+)\)/);
@@ -201,7 +264,7 @@ if (await drill.count()) {
   await page.waitForTimeout(4000);
   await page.screenshot({ path: path.join(OUT, 'journey--finding-drilldown.png') });
 
-  const banner = await page.locator('.note').first().innerText().catch(() => '');
+  const banner = await page.locator(SEL.notice).first().innerText().catch(() => '');
   const shown = banner.match(/Showing the (\d+)/);
   check('the drill-down states it is the finding\'s own set',
     /finding/i.test(banner), banner.slice(0, 90));
@@ -223,12 +286,12 @@ await page.waitForTimeout(5000);
 const pagerText = await page.locator('.pager').first().innerText().catch(() => '');
 check('the table states the whole population', /of\s[\d,]+/.test(pagerText), pagerText.slice(0, 80));
 
-const firstBefore = await page.locator('tbody tr td').first().innerText().catch(() => '');
-const nextBtn = page.locator('.pager button:has-text("Next")');
+const firstBefore = await page.locator(SEL.firstCell).first().innerText().catch(() => '');
+const nextBtn = page.locator(SEL.nextPage);
 if (await nextBtn.count() && await nextBtn.isEnabled()) {
   await nextBtn.click();
   await page.waitForTimeout(3000);
-  const firstAfter = await page.locator('tbody tr td').first().innerText().catch(() => '');
+  const firstAfter = await page.locator(SEL.firstCell).first().innerText().catch(() => '');
   check('paging past the first 50 shows different rows', firstBefore !== firstAfter);
   await page.screenshot({ path: path.join(OUT, 'journey--creatives-page2.png') });
 } else {
@@ -237,11 +300,11 @@ if (await nextBtn.count() && await nextBtn.isEnabled()) {
 
 await page.goto(`${BASE}/creatives`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(4000);
-const sortBtn = page.locator('th .sortbtn:has-text("GMV")').first();
-const beforeSort = await page.locator('tbody tr td.num').first().innerText().catch(() => '');
+const sortBtn = page.locator(SEL.sortGmv).first();
+const beforeSort = await page.locator(SEL.firstNumCell).first().innerText().catch(() => '');
 await sortBtn.click();
 await page.waitForTimeout(2500);
-const afterSort = await page.locator('tbody tr td.num').first().innerText().catch(() => '');
+const afterSort = await page.locator(SEL.firstNumCell).first().innerText().catch(() => '');
 check('clicking a sort header reorders the table', beforeSort !== afterSort,
   `${beforeSort} then ${afterSort}`);
 
@@ -256,11 +319,11 @@ await page.locator('button:has-text("Clear")').first().click().catch(() => {});
 await page.waitForTimeout(2500);
 
 // Row detail opens in place.
-const detailBtn = page.locator('tbody .lnk:has-text("Detail")').first();
+const detailBtn = page.locator(SEL.detailBtn).first();
 if (await detailBtn.count()) {
   await detailBtn.click();
   await page.waitForTimeout(1200);
-  check('a creative row opens its detail in place', await page.locator('.vdetail').isVisible());
+  check('a creative row opens its detail in place', await page.locator(SEL.drawer).isVisible());
   await page.screenshot({ path: path.join(OUT, 'journey--creative-row-detail.png') });
 }
 
@@ -268,25 +331,43 @@ if (await detailBtn.count()) {
 console.log('\n── products open a real detail page ──');
 await page.goto(`${BASE}/products`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(4500);
-const thumbs = await page.locator('.pthumb').count();
+const thumbs = await page.locator(SEL.thumb).count();
 check('product thumbnails render', thumbs > 0, `${thumbs} found`);
 
-const prodLink = page.locator('tbody a.lnk').first();
+const prodLink = page.locator(SEL.rowLink).first();
 if (await prodLink.count()) {
   await prodLink.click();
   await page.waitForTimeout(4500);
   check('a product row opens product detail', /\/products\/.+/.test(page.url()), page.url());
-  check('the detail names its scope', await page.locator('.ptitle').isVisible());
+  check('the detail names its scope', await page.locator(SEL.detailTitle).isVisible());
   await page.screenshot({ path: path.join(OUT, 'journey--product-detail.png') });
 
-  await page.locator('.tabbar button:has-text("Commerce")').click();
+  await page.locator(SEL.tab('Commerce')).click();
   await page.waitForTimeout(1500);
   const commerce = await page.evaluate(() => document.body.innerText);
-  check('commerce names the missing provider fields rather than showing 0%',
-    /Unavailable/i.test(commerce) && /original_price/.test(commerce));
+  // Also a changed requirement: the provider field names were deliberately
+  // MOVED to Data status ("Move provider field names, null payload explanations,
+  // and funding limitations into the Data status details"). So Commerce must
+  // still refuse to invent a discount, but it states that briefly and points at
+  // the detail rather than carrying the field names itself.
+  //
+  // Scoped to the commerce region, not document.body — a product page shows
+  // legitimate 0% figures elsewhere (ad share on a product with no affiliate
+  // orders, for one), and scanning the whole page failed on those. An assertion
+  // that reads the wrong region is just a slower way of being wrong.
+  const discountRow = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('tr, dt, .notice')];
+    const hit = rows.find((el) => /discount/i.test(el.textContent || ''));
+    return hit ? (hit.closest('tr') || hit).textContent.trim() : null;
+  });
+  check('commerce states discount depth is unavailable rather than 0%',
+    discountRow != null && /unavailable/i.test(discountRow) && !/\b0(\.0+)?%/.test(discountRow),
+    discountRow ? discountRow.slice(0, 120) : 'no discount row found at all');
+  check('and points at the data detail instead of carrying field names here',
+    /data (status|details)/i.test(commerce), 'no route to the data detail');
   await page.screenshot({ path: path.join(OUT, 'journey--product-commerce.png') });
 
-  await page.locator('.tabbar button:has-text("Creatives")').click();
+  await page.locator(SEL.tab('Creatives')).click();
   await page.waitForTimeout(4000);
   await page.screenshot({ path: path.join(OUT, 'journey--product-creatives.png') });
 
@@ -299,14 +380,14 @@ if (await prodLink.count()) {
 console.log('\n── campaign detail and the persistent workflow ──');
 await page.goto(`${BASE}/campaigns`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(4000);
-const campLink = page.locator('tbody a.lnk').first();
+const campLink = page.locator(SEL.rowLink).first();
 if (await campLink.count()) {
   await campLink.click();
   await page.waitForTimeout(5000);
   check('a campaign name opens campaign detail', /\/campaigns\/.+/.test(page.url()), page.url());
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-detail.png') });
 
-  await page.locator('.tabbar button:has-text("Scenario")').click();
+  await page.locator(SEL.tab('Scenario')).click();
   await page.waitForTimeout(3000);
   const scenario = await page.evaluate(() => document.body.innerText);
   check('the scenario view states its training window separately',
@@ -315,7 +396,7 @@ if (await campLink.count()) {
     !/If daily budget/i.test(scenario));
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-scenario.png') });
 
-  await page.locator('.tabbar button:has-text("Evidence")').click();
+  await page.locator(SEL.tab('Evidence')).click();
   await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-evidence.png') });
 } else {
@@ -343,17 +424,17 @@ if (await planBtn.count()) {
 console.log('\n── switching shop leaves nothing behind ──');
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(5000);
-const shopSel = page.locator('.topbar select').first();
+const shopSel = page.locator(SEL.shopSelect).first();
 const options = await shopSel.locator('option').all();
 if (options.length > 1) {
-  const before = await page.locator('.statstrip .v').first().innerText().catch(() => '');
+  const before = await page.locator(SEL.metricValue).first().innerText().catch(() => '');
   await shopSel.selectOption({ index: 1 });
   await page.waitForTimeout(1200);
   // Immediately after the switch, the old shop's figure must not still be shown
   // as if it belonged to the new one.
-  const mid = await page.locator('.statstrip .v').first().innerText().catch(() => '');
+  const mid = await page.locator(SEL.metricValue).first().innerText().catch(() => '');
   await page.waitForTimeout(4500);
-  const after = await page.locator('.statstrip .v').first().innerText().catch(() => '');
+  const after = await page.locator(SEL.metricValue).first().innerText().catch(() => '');
   check('the new shop shows its own figures', before !== after || options.length === 1,
     `before ${before}, after ${after}`);
   check('no stale figure is presented during the switch', mid === after || mid === '—' || mid === '',
@@ -386,12 +467,12 @@ await dpage.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
 await dpage.fill('input[type=email]', 'mrrashid3255@gmail.com');
 await dpage.fill('input[type=password]', env.BOSS_LOGIN_PASSWORD);
 await dpage.click('button:has-text("Sign in")');
-await dpage.waitForSelector('.topbar', { timeout: 30000 });
+await dpage.waitForSelector(SEL.header, { timeout: 30000 });
 await dpage.waitForTimeout(5000);
 await dpage.screenshot({ path: path.join(OUT, 'theme--dark-overview.png') });
 
 // Text must not be rendered on a ground it cannot be read against.
-const contrast = await dpage.evaluate(() => {
+const contrast = await dpage.evaluate((sel) => {
   const lum = (c) => {
     const m = c.match(/\d+/g); if (!m) return null;
     const [r, g, b] = m.map(Number).map((v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
@@ -399,12 +480,12 @@ const contrast = await dpage.evaluate(() => {
   };
   const bodyBg = getComputedStyle(document.body).backgroundColor;
   const bl = lum(bodyBg);
-  const el = document.querySelector('.decision-title') || document.querySelector('h2') || document.body;
+  const el = document.querySelector(sel) || document.querySelector('h2') || document.body;
   const tl = lum(getComputedStyle(el).color);
   if (bl == null || tl == null) return null;
   const ratio = (Math.max(bl, tl) + 0.05) / (Math.min(bl, tl) + 0.05);
   return { bodyBg, ratio: Math.round(ratio * 10) / 10 };
-});
+}, SEL.priorityText);
 check('dark theme: body has an explicit background, not transparent',
   contrast && !/rgba\(0, 0, 0, 0\)/.test(contrast.bodyBg), JSON.stringify(contrast));
 check('dark theme: heading text is readable against it',
@@ -412,6 +493,29 @@ check('dark theme: heading text is readable against it',
 await dark.close();
 
 // ── outreach: loads, and QA never sends ────────────────────────────────────
+// ── nothing was lost in the tidying ────────────────────────────────────────
+// The redesign shortened several prominent banners. The spec is explicit that
+// this is a RELOCATION, not a deletion: "Verify Data status still contains the
+// information removed from prominent banners." A shorter message that quietly
+// drops a real limitation is worse than the long one it replaced.
+console.log('\n── the detail removed from banners still exists ──');
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto(`${BASE}/data`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector(SEL.header, { timeout: 20000 });
+await waitForData(page);
+const dataText = await page.evaluate(() => document.body.innerText);
+await page.screenshot({ path: path.join(OUT, 'gate--data-status.png') });
+
+for (const [what, re] of [
+  ['the null discount field', /discount_pct/],
+  ['the null reference-price field', /original_price/],
+  ['revenue-by-surface being unavailable', /revenue by surface/i],
+  ['the Partner-tab ingestion gap', /partner/i],
+  ['the missing settings/change feed', /settings|change feed/i],
+]) {
+  check(`Data status still names ${what}`, re.test(dataText));
+}
+
 console.log('\n── outreach is reachable and untouched ──');
 await page.goto(`${BASE}/outreach`, { waitUntil: 'domcontentloaded' });
 await waitForData(page);

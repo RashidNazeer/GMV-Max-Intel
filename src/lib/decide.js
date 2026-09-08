@@ -286,6 +286,7 @@ const cReviewCreative = (x) => {
     action: ACTION.REVIEW_CREATIVE,
     severity: share >= 0.5 || conc >= 0.6 ? 'critical' : 'warning',
     title: 'Creative is the constraint, not the budget',
+    shortFinding: (x) => `${x.decliningVideos} videos carrying ${pct(x.decliningShare)} of video revenue declined more than 30%`,
     reason: `${bits.join(', and ')}. Spending harder against creative that is already fading raises cost per order rather than volume — the delivery finds the same audience with a weaker asset.`,
     actionText: 'Brief replacements before changing spend. Open the affected videos to see which are worth refreshing and which are simply finished.',
     evidence: bits,
@@ -319,6 +320,7 @@ const cIncreaseBudget = (x) => {
     usesSpend: true,
     severity: 'info',
     title: 'Room to raise budget',
+    shortFinding: (x) => `The next dollar is modelled to return ${x.marginal?.toFixed(2)} against an average of ${x.avgRoas?.toFixed(2)}`,
     reason: `The next dollar is modelled to return ${x.marginal.toFixed(2)} in ${x.marginalTargetLabel || 'shop GMV'}${x.marginalCi ? ` (${x.marginalCi[0].toFixed(2)}–${x.marginalCi[1].toFixed(2)})` : ''}, against an average of ${x.avgRoas?.toFixed(2)}. That is above the floor this objective implies, so extra delivery is still worth buying.`,
     actionText: `Test a ${pct(band)} increase for ${testDays(x)} days and compare against the same period before it.`,
     evidence: [
@@ -355,6 +357,7 @@ const cDecreaseBudget = (x) => {
     usesSpend: true,
     severity: 'warning',
     title: 'The next dollar is losing money',
+    shortFinding: (x) => `Marginal return ${x.marginal?.toFixed(2)} — below one, while the average is ${x.avgRoas?.toFixed(2)}`,
     reason: `The marginal return is ${x.marginal.toFixed(2)} in ${x.marginalTargetLabel || 'shop GMV'} — below one. The campaign can still average ${x.avgRoas?.toFixed(2)} while the money being added to it does not pay for itself.`,
     actionText: `Reduce the daily budget by ${pct(band)} for ${testDays(x)} days and check whether total shop GMV holds.`,
     evidence: [
@@ -393,6 +396,7 @@ const cTargetRoi = (x) => {
     usesSpend: true,
     severity: 'info',
     title: 'Target ROI is throttling delivery',
+    shortFinding: (x) => `Spend is ${pct(x.utilisation)} of budget while the marginal return is still ${x.marginal?.toFixed(2)}`,
     reason: `Spend is only ${pct(x.utilisation)} of the daily budget while the marginal return is still ${x.marginal.toFixed(2)}. The budget is not the limit — the bid is.`,
     actionText: `Lower Target ROI by ${pct(band)} for ${testDays(x)} days. Watch delivered spend and marginal return together; if spend rises and marginal falls below one, reverse it.`,
     evidence: [
@@ -438,6 +442,7 @@ const cHold = (x) => {
     action: ACTION.HOLD,
     severity: 'info',
     title: 'Hold — a change is still being read',
+    shortFinding: (x) => `A setting changed ${x.daysSinceLastChange} day(s) ago; ${COOLDOWN_DAYS} are needed to read the result`,
     reason: `A setting changed ${x.daysSinceLastChange} day${x.daysSinceLastChange === 1 ? '' : 's'} ago. Stacking another change now makes both results uninterpretable, because nothing separates which one moved the number.`,
     actionText: `Watch delivered spend and total shop GMV. The next evaluation becomes eligible in ${COOLDOWN_DAYS - x.daysSinceLastChange} day(s).`,
     evidence: [`${x.daysSinceLastChange} days since the last change`, `cooldown ${COOLDOWN_DAYS} days`],
@@ -606,6 +611,8 @@ export function decide(facts = {}) {
   };
 }
 
+const safeShort = (fn, x) => { try { return fn(x) || null; } catch { return null; } };
+
 /** The typed contract the database stores and the UI renders. */
 function shape(c, x, role, suppressedList) {
   const conf = c.confidence ?? confidence(c);
@@ -615,6 +622,9 @@ function shape(c, x, role, suppressedList) {
     role,
     severity: c.severity,
     title: c.title,
+    // A single line with real values, for the priority strip. The full title
+    // and reason stay untouched for the drawer.
+    short_finding: typeof c.shortFinding === 'function' ? safeShort(c.shortFinding, x) : (c.shortFinding || c.title),
     reason: c.reason,
     action_text: c.actionText,
     evidence: c.evidence || [],

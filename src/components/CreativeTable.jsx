@@ -1,24 +1,42 @@
-// ONE creative table, used on the Creatives page and inside campaign and
-// product detail. The spec asks for a single reusable table for exactly the
-// reason this project keeps rediscovering: two implementations of one view
-// drift, and then two screens quote different counts for the same question.
+// ONE creative table, used on Creatives and inside product/campaign detail.
 //
-// Reacher supplies NO thumbnail for a video — no cover field on the feed and
-// nothing image-shaped in the raw payload either. So every row gets a neutral
-// placeholder built from the creator's initial, and the record stays usable.
-// A missing image is not a broken row.
+// ── THE CLIPPING DEFECT THIS FIXES ─────────────────────────────────────────
+// Detail used to expand into a <tr> INSIDE the table's `overflow-x: auto`
+// container, so it lived in the table's horizontal scroll coordinate system.
+// Clicking the rightmost Details control made the browser scroll the table
+// sideways to reveal the trigger, and the expanded content then began off the
+// left edge of the visible area. The identity column went with it.
+//
+// The detail is now a right-side drawer rendered in a PORTAL at the document
+// root. It cannot inherit the table's clipping because it is not inside it,
+// and closing it returns focus to the row that opened it — which is what
+// preserves the table's scroll position, filters and result set.
+//
+// The identity column is sticky, so the video you are reading about stays
+// visible while you scroll to its numbers.
 import { useState } from 'react';
 import {
-  Note, Skeleton, MiniBar, Trend, Toolbar, Pager, SortTh, StatusChip, STATUSES,
-  money, moneyExact, pct,
+  Skeleton, Pager, SortHeader, StatusLabel, STATUSES, Identity, Bar, Trend,
+  Drawer, ColumnPicker, EmptyState, Notice, money, moneyExact, pct,
 } from './ui.jsx';
 
 const PAGE_SIZE = 50;
 
-/**
- * A caption is not an identity. Stripping hashtags first means the column shows
- * what distinguishes one video from another instead of forty identical prefixes.
- */
+const ALL_COLUMNS = [
+  { key: 'video',    label: 'Video',        required: true },
+  { key: 'creator',  label: 'Creator',      required: true },
+  { key: 'status',   label: 'Status',       required: true },
+  { key: 'gmv',      label: 'GMV',          required: true },
+  { key: 'orders',   label: 'Orders',       required: true },
+  { key: 'trend',    label: '7-day trend',  required: true },
+  { key: 'paid_gmv', label: 'Ad-driven' },
+  { key: 'share',    label: 'Ad share' },
+  { key: 'age',      label: 'Age' },
+  { key: 'views',    label: 'Lifetime views' },
+];
+const DEFAULT_COLUMNS = ALL_COLUMNS.filter((c) => c.required).map((c) => c.key);
+
+/** A caption is not an identity — strip hashtags so rows differ from each other. */
 export function shortTitle(v) {
   const t = (v.title || '').trim();
   if (!t) return v.video_id;
@@ -26,140 +44,114 @@ export function shortTitle(v) {
   return clean.length > 4 ? clean : t;
 }
 
-/** Neutral placeholder — the provider gives no cover image for any video. */
-function VideoMark({ v }) {
-  const seed = (v.creator_handle || v.video_id || '?');
-  const initial = seed.replace(/[^a-z0-9]/gi, '').charAt(0).toUpperCase() || '?';
-  // Deterministic hue so the same creator keeps the same mark between renders.
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
-  return (
-    <span className="vmark" style={{ '--vh': h }} aria-hidden="true">{initial}</span>
-  );
-}
-
 export default function CreativeTable({
   rows, total, loading, cur, page, sort, dir, search, status,
   onSort, onPage, onSearch, onStatus, onClear,
-  trendMeasurable = true, compact = false, banner = null, emptyHint = null,
+  trendMeasurable = true, toolbar = true, contextBar = null, emptyHint = null,
 }) {
-  const [open, setOpen] = useState(null);
+  const [cols, setCols] = useState(DEFAULT_COLUMNS);
+  const [openVideo, setOpenVideo] = useState(null);
+  const show = (k) => cols.includes(k);
   const filtered = !!(search || status);
 
   return (
     <>
-      {!compact && (
-        <div className="pad" style={{ paddingTop: 0, paddingBottom: 10 }}>
-          <Toolbar count={total} onClear={onClear} active={filtered}>
-            <input className="input" placeholder="Search creator, caption or id"
-              aria-label="Search creatives"
-              value={search || ''} onChange={(e) => onSearch(e.target.value)} style={{ minWidth: 230 }} />
-            <select className="input" aria-label="Filter by status"
-              value={status || ''} onChange={(e) => onStatus(e.target.value)}>
+      {toolbar && (
+        <div className="panel-body" style={{ paddingBottom: 12, borderBottom: '1px solid var(--divider)' }}>
+          <div className="toolbar">
+            <input className="input" placeholder="Search creator, caption or ID"
+              aria-label="Search creatives" value={search || ''}
+              onChange={(e) => onSearch(e.target.value)} style={{ minWidth: 240, flex: '1 1 240px' }} />
+            <select className="input" aria-label="Status" value={status || ''}
+              onChange={(e) => onStatus(e.target.value)}>
               <option value="">All statuses</option>
               {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
-          </Toolbar>
-          {banner}
+            <ColumnPicker columns={ALL_COLUMNS} visible={cols} onChange={setCols} />
+            <span className="spacer" />
+            <span className="meta">{Number(total || 0).toLocaleString()} results</span>
+            {filtered && <button className="btn btn-sm" onClick={onClear}>Clear filters</button>}
+          </div>
+          {contextBar}
         </div>
       )}
 
-      {loading && !rows?.length ? <div className="pad"><Skeleton h={240} /></div> : (
-        <div className="scroll">
-          <table>
+      {loading && !rows?.length ? (
+        <div className="panel-body"><Skeleton h={260} /></div>
+      ) : !rows?.length ? (
+        <EmptyState title={filtered ? 'No videos match these filters' : 'No videos with revenue'}
+          action={filtered ? <button className="btn" onClick={onClear}>Clear filters</button> : null}>
+          {filtered
+            ? 'Try a broader search or a different status.'
+            : (emptyHint || 'This shop has no affiliate order lines carrying a video ID in this window.')}
+        </EmptyState>
+      ) : (
+        <div className="tablewrap">
+          <table className="data">
             <thead>
               <tr>
-                <th>Video</th>
+                <th className="sticky-l">Video</th>
                 <th>Creator</th>
                 <th>Status</th>
-                <SortTh label="GMV" field="gmv" sort={sort} dir={dir} onSort={onSort} num />
-                {!compact && <SortTh label="Ad-driven" field="paid_gmv" sort={sort} dir={dir} onSort={onSort} num />}
-                {!compact && <th style={{ width: 104 }}>Ad share</th>}
-                <SortTh label="Orders" field="orders" sort={sort} dir={dir} onSort={onSort} num />
-                <SortTh label="7d trend" field="trend" sort={sort} dir={dir} onSort={onSort} num
+                <SortHeader label="GMV" field="gmv" sort={sort} dir={dir} onSort={onSort} num />
+                {show('paid_gmv') && <SortHeader label="Ad-driven" field="paid_gmv" sort={sort} dir={dir} onSort={onSort} num />}
+                {show('share') && <th>Ad share</th>}
+                <SortHeader label="Orders" field="orders" sort={sort} dir={dir} onSort={onSort} num />
+                <SortHeader label="7-day trend" field="trend" sort={sort} dir={dir} onSort={onSort} num
                   hint="Last 7 complete days against the 7 immediately before. Both windows are retrieved even when the report range is shorter." />
-                {!compact && <SortTh label="Age" field="age" sort={sort} dir={dir} onSort={onSort} num />}
-                {!compact && <SortTh label="Views" field="views" sort={sort} dir={dir} onSort={onSort} num
+                {show('age') && <SortHeader label="Age" field="age" sort={sort} dir={dir} onSort={onSort} num />}
+                {show('views') && <SortHeader label="Lifetime views" field="views" sort={sort} dir={dir} onSort={onSort} num
                   hint="Lifetime views from the video feed. The reporting date filter does NOT change them." />}
-                <th style={{ width: 1 }}></th>
+                <th className="num">Details</th>
               </tr>
             </thead>
             <tbody>
-              {(rows || []).map((v) => {
-                const isOpen = open === v.video_id;
-                return [
-                  <tr key={v.video_id} className={isOpen ? 'row-open' : undefined}>
-                    <td className="tight">
-                      <div className="vcell">
-                        <VideoMark v={v} />
-                        {v.tiktok_url
-                          ? <a href={v.tiktok_url} target="_blank" rel="noreferrer" className="truncate"
-                              title={v.title || v.video_id}>{shortTitle(v)}</a>
-                          : <span className="truncate" title={v.title || v.video_id}>{shortTitle(v)}</span>}
+              {rows.map((v) => (
+                <tr key={v.video_id} className="media">
+                  <td className="sticky-l">
+                    <Identity name={shortTitle(v)} title={v.title || v.video_id}
+                      sub={v.video_id} kind="video" />
+                  </td>
+                  <td className="muted">@{v.creator_handle}</td>
+                  <td><StatusLabel status={v.status} /></td>
+                  <td className="num"><strong>{moneyExact(v.gmv, cur)}</strong></td>
+                  {show('paid_gmv') && <td className="num">{moneyExact(v.paid_gmv, cur)}</td>}
+                  {show('share') && (
+                    <td>
+                      <div className="row" style={{ flexWrap: 'nowrap', gap: 8 }}>
+                        <Bar value={v.paid_share} />
+                        <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 13 }}>{pct(v.paid_share, 0)}</span>
                       </div>
                     </td>
-                    <td className="tight muted">@{v.creator_handle}</td>
-                    <td className="tight"><StatusChip status={v.status} /></td>
-                    <td className="num tight"><strong>{moneyExact(v.gmv, cur)}</strong></td>
-                    {!compact && <td className="num tight" style={{ color: 'var(--paid)' }}>{moneyExact(v.paid_gmv, cur)}</td>}
-                    {!compact && (
-                      <td className="tight">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <MiniBar value={v.paid_share} />
-                          <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{pct(v.paid_share, 0)}</span>
-                        </div>
-                      </td>
-                    )}
-                    <td className="num tight muted">{Number(v.orders || 0).toLocaleString()}</td>
-                    <td className="num tight">
-                      <Trend value={v.trend_pct} hasBaseline={v.has_baseline} measurable={trendMeasurable} />
-                    </td>
-                    {!compact && <td className="num tight muted">{v.age_days == null ? '—' : `${v.age_days}d`}</td>}
-                    {!compact && <td className="num tight muted">{v.views == null ? '—' : Number(v.views).toLocaleString()}</td>}
-                    <td className="tight">
-                      <button className="lnk" aria-expanded={isOpen}
-                        onClick={() => setOpen(isOpen ? null : v.video_id)}>
-                        {isOpen ? 'Close' : 'Detail'}
-                      </button>
-                    </td>
-                  </tr>,
-                  isOpen && (
-                    <tr key={`${v.video_id}-d`} className="row-detail">
-                      <td colSpan={compact ? 7 : 11}>
-                        <VideoDetail v={v} cur={cur} />
-                      </td>
-                    </tr>
-                  ),
-                ];
-              })}
-              {!rows?.length && !loading && (
-                <tr><td colSpan={compact ? 7 : 11} className="muted" style={{ padding: 22, textAlign: 'center' }}>
-                  {filtered
-                    ? <>No videos match these filters. <button className="lnk" onClick={onClear}>Clear them</button>.</>
-                    : (emptyHint || 'No videos with revenue in this window.')}
-                </td></tr>
-              )}
+                  )}
+                  <td className="num">{Number(v.orders || 0).toLocaleString()}</td>
+                  <td className="num"><Trend value={v.trend_pct} hasBaseline={v.has_baseline} measurable={trendMeasurable} /></td>
+                  {show('age') && <td className="num muted">{v.age_days == null ? '—' : `${v.age_days}d`}</td>}
+                  {show('views') && <td className="num muted">{v.views == null ? '—' : Number(v.views).toLocaleString()}</td>}
+                  <td className="num">
+                    <button className="btn btn-sm" onClick={() => setOpenVideo(v)}
+                      aria-label={`Details for ${shortTitle(v)}`}>Details</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {!compact && (
-        <div className="pad" style={{ paddingTop: 12 }}>
-          <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={onPage} />
-        </div>
-      )}
+      {onPage && <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={onPage} />}
+
+      <CreativeDrawer video={openVideo} cur={cur} onClose={() => setOpenVideo(null)} />
     </>
   );
 }
 
-/**
- * The row detail: the full caption, the evidence behind the status, and the
- * recent history — without pushing the buyer out of the app.
- */
-function VideoDetail({ v, cur }) {
+function CreativeDrawer({ video, cur, onClose }) {
+  if (!video) return null;
+  const v = video;
+
   const why = {
-    winner: `${v.orders} orders in this window and not declining.`,
+    winner: `${v.orders} orders in this window, and not declining.`,
     candidate: `${v.orders} order${Number(v.orders) === 1 ? '' : 's'} — below the three that make a winner.`,
     rising: 'Up more than 30% against the previous 7 days.',
     declining: 'Down more than 30% against the previous 7 days. A revenue drop only.',
@@ -168,25 +160,48 @@ function VideoDetail({ v, cur }) {
   }[v.status];
 
   return (
-    <div className="vdetail">
-      <div>
-        <div className="k">Full caption</div>
-        <p className="vcaption">{v.title || <em className="muted">No caption on the video feed.</em>}</p>
-        <div className="k" style={{ marginTop: 12 }}>Why this status</div>
-        <p className="vwhy">{why}</p>
-      </div>
-      <div className="vfacts">
-        <div className="vfact"><span>Last 7 days</span><b>{moneyExact(v.recent_gmv, cur)}</b></div>
-        <div className="vfact"><span>Previous 7 days</span><b>{v.has_baseline ? moneyExact(v.prior_gmv, cur) : <em className="muted">no baseline</em>}</b></div>
-        <div className="vfact"><span>Share of video revenue</span><b>{pct(v.gmv_share, 1)}</b></div>
-        <div className="vfact"><span>Order lines</span><b>{Number(v.lines || 0).toLocaleString()}</b></div>
-        <div className="vfact"><span>Posted</span><b>{v.posted_date ? new Date(v.posted_date).toLocaleDateString() : <em className="muted">unknown</em>}</b></div>
+    <Drawer open onClose={onClose} title={shortTitle(v)} sub={`@${v.creator_handle}`}>
+      <div className="stack">
+        <div className="row" style={{ gap: 12, flexWrap: 'nowrap' }}>
+          <Identity name="" kind="video" />
+          <div>
+            <StatusLabel status={v.status} />
+            <p className="meta" style={{ margin: '6px 0 0', lineHeight: '18px' }}>{why}</p>
+          </div>
+        </div>
+
+        <section>
+          <h3 className="section-title">Full caption</h3>
+          <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', lineHeight: '20px' }}>
+            {v.title || <span className="muted">No caption on the video feed.</span>}
+          </p>
+        </section>
+
+        <section>
+          <h3 className="section-title">Performance</h3>
+          <dl className="dl" style={{ marginTop: 8 }}>
+            <dt>GMV in window</dt><dd>{moneyExact(v.gmv, cur)}</dd>
+            <dt>Ad-driven</dt><dd>{moneyExact(v.paid_gmv, cur)} <span className="muted">({pct(v.paid_share, 0)})</span></dd>
+            <dt>Orders</dt><dd>{Number(v.orders || 0).toLocaleString()}</dd>
+            <dt>Last 7 days</dt><dd>{moneyExact(v.recent_gmv, cur)}</dd>
+            <dt>Previous 7 days</dt>
+            <dd>{v.has_baseline ? moneyExact(v.prior_gmv, cur) : <span className="muted">No baseline</span>}</dd>
+            <dt>Share of video revenue</dt><dd>{pct(v.gmv_share, 1)}</dd>
+            <dt>Order lines</dt><dd>{Number(v.lines || 0).toLocaleString()}</dd>
+            <dt>Posted</dt>
+            <dd>{v.posted_date ? new Date(v.posted_date).toLocaleDateString() : <span className="muted">Unknown</span>}</dd>
+            <dt>Lifetime views</dt>
+            <dd>{v.views == null ? <span className="muted">—</span> : Number(v.views).toLocaleString()}</dd>
+            <dt>Video ID</dt><dd className="mono">{v.video_id}</dd>
+          </dl>
+        </section>
+
         {v.tiktok_url && (
-          <a className="btn" href={v.tiktok_url} target="_blank" rel="noreferrer" style={{ marginTop: 8 }}>
-            Open on TikTok ↗
-          </a>
+          <a className="btn" href={v.tiktok_url} target="_blank" rel="noreferrer">Open on TikTok ↗</a>
         )}
       </div>
-    </div>
+    </Drawer>
   );
 }
+
+export { ALL_COLUMNS, PAGE_SIZE };

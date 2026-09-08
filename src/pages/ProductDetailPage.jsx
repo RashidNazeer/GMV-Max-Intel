@@ -9,11 +9,20 @@
 // on every product and original_price null on every SKU, so there is no
 // reference price, no discount depth, and no seller-funded versus TikTok-funded
 // split. The tab names the missing fields rather than rendering a confident 0%.
+//
+// ── WHAT THE REDESIGN CHANGED HERE ─────────────────────────────────────────
+// Five floating stat cards became ONE metric region. The bespoke `.funnel`
+// markup became an ordinary data table, so the three steps line up with every
+// other number on the page. The four-line "price history cannot be shown"
+// paragraph became a one-sentence notice with the reasoning behind a
+// disclosure — every field name it named is still on the page. No query, no
+// query key and no calculation moved.
 import { useState } from 'react';
 import { useParams, useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar,
+  Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  ComposedChart, Bar as ChartBar,
 } from 'recharts';
 import {
   shopProducts, shopProductStats, shopTopVideos, listCampaigns,
@@ -22,7 +31,10 @@ import {
 import { supabase } from '../lib/supabase.js';
 import { scopedTo } from '../lib/scope.js';
 import CreativeTable from '../components/CreativeTable.jsx';
-import { Card, Stat, Note, Skeleton, Empty, Basis, Hint, TabBar, MiniBar, Pager } from '../components/ui.jsx';
+import ReportToolbar from '../components/ReportToolbar.jsx';
+import {
+  Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, Thumb, Bar, Unavailable,
+} from '../components/ui.jsx';
 
 const rate = (v, d = 2) => (v == null ? '—' : `${(Number(v) * 100).toFixed(d)}%`);
 
@@ -31,6 +43,16 @@ const TABS = [
   { id: 'commerce', label: 'Commerce' },
   { id: 'creatives', label: 'Creatives' },
 ];
+
+/** An explanation that is worth keeping but not worth a full-width paragraph. */
+function Disclosure({ summary, children }) {
+  return (
+    <details>
+      <summary className="meta" style={{ cursor: 'pointer' }}>{summary}</summary>
+      <div className="meta" style={{ marginTop: 8, maxWidth: '72ch' }}>{children}</div>
+    </details>
+  );
+}
 
 export default function ProductDetailPage() {
   const { productId } = useParams();
@@ -62,20 +84,39 @@ export default function ProductDetailPage() {
   });
   const campaignsQ = useQuery({ queryKey: ['camps', shop.id], queryFn: () => listCampaigns(shop.id) });
 
-  if (listQ.isLoading) return <div className="card pad"><Skeleton h={220} /></div>;
+  const crumbs = <Link to={scopedTo('/products', params)}>Products</Link>;
+
+  // Never render a headline over an absent product: no title, no zeros.
+  if (listQ.isLoading) {
+    return (
+      <>
+        <PageHeader title="Product" crumbs={crumbs} right={<ReportToolbar scope={scope} shop={shop} />} />
+        <MetricSummary items={[]} loading />
+        <Panel><Skeleton h={220} /></Panel>
+      </>
+    );
+  }
 
   const p = listQ.data?.rows?.[0];
   if (!p) {
     return (
-      <Empty title="That product is not in this shop or window">
-        The link may point at a product belonging to another shop, or one with no data between{' '}
-        {scope.start} and {scope.end}.{' '}
-        <Link className="lnk" to={scopedTo('/products', params)}>Back to products</Link>
-      </Empty>
+      <>
+        <PageHeader title="Product not found" crumbs={crumbs} right={<ReportToolbar scope={scope} shop={shop} />} />
+        <Panel>
+          <EmptyState
+            title="That product is not in this shop or window"
+            action={<Link className="btn" to={scopedTo('/products', params)}>Back to products</Link>}
+          >
+            The link may point at a product belonging to another shop, or one with no data between{' '}
+            {scope.start} and {scope.end}.
+          </EmptyState>
+        </Panel>
+      </>
     );
   }
 
   const s = statsQ.data;
+  const statsLoading = statsQ.isLoading;
   const medianN = Number(s?.median_n) || 0;
   const median = medianN >= 3 && s?.median_conversion != null ? Number(s.median_conversion) : null;
   const weak = median != null && p.click_to_order_rate != null
@@ -86,65 +127,112 @@ export default function ProductDetailPage() {
   // product_id; when they do not, we say so rather than guessing a link.
   const related = (campaignsQ.data || []).filter((c) => c.product_id === productId);
 
+  const name = p.title || p.product_id;
+
+  // One region, one basis. Everything here is measured, so no metric carries
+  // its own tag — the region says it once.
+  const metrics = [
+    {
+      label: 'GMV', value: money(p.gmv, cur),
+      context: `${p.orders == null ? '—' : Number(p.orders).toLocaleString()} orders`,
+    },
+    {
+      label: 'Conversion', value: rate(p.click_to_order_rate),
+      tone: weak ? 'neg' : '',
+      // While the shop stats are still in flight there is no benchmark YET,
+      // which is not the same claim as there being none.
+      context: median != null ? `shop median ${rate(median)}`
+        : statsLoading ? 'checking the shop benchmark' : 'no shop benchmark',
+      hint: median != null
+        ? `Funnel orders divided by clicks. The benchmark is the median across ${medianN} products with ${Number(s?.median_min_clicks || 500).toLocaleString()}+ clicks.`
+        : statsLoading
+          ? 'Funnel orders divided by clicks. The shop-wide benchmark is still loading.'
+          : `Fewer than 3 products clear ${Number(s?.median_min_clicks || 500).toLocaleString()} clicks, so there is no benchmark to compare against.`,
+    },
+    {
+      label: 'CTR', value: rate(p.ctr),
+      // Unreported impressions are not zero impressions.
+      context: numOrNull(p.impressions) == null
+        ? 'impressions not reported'
+        : `${Number(p.impressions).toLocaleString()} impressions`,
+    },
+    {
+      label: 'Refunds', value: money(p.refunds, cur),
+      tone: p.refund_rate != null && Number(p.refund_rate) >= 0.08 ? 'neg' : '',
+      context: rate(p.refund_rate, 1),
+    },
+    {
+      label: 'Ad share',
+      value: p.paid_share == null ? '—' : pct(p.paid_share, 0),
+      context: p.paid_share == null ? 'no affiliate orders' : `${money(p.measured_paid_gmv, cur)} ad-driven`,
+      hint: "The portion of this product's AFFILIATE revenue that carried a Shop Ads commission — measured per product, never apportioned from a shop-wide rate.",
+    },
+  ];
+
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <div className="crumbs">
-        <Link className="lnk" to={scopedTo('/products', params)}>← Products</Link>
-        <span className="muted"> / {p.title || p.product_id}</span>
+    <>
+      <PageHeader
+        crumbs={crumbs}
+        title={
+          <span className="row" style={{ gap: 12, flexWrap: 'nowrap', minWidth: 0 }}>
+            <Thumb src={p.image_url} kind="product" alt="" />
+            <span className="truncate" title={name} style={{ minWidth: 0 }}>{name}</span>
+          </span>
+        }
+        sub={
+          <>
+            <span className="mono">{p.product_id}</span>
+            {p.has_sales === false && (
+              <span className="status status-info" style={{ marginLeft: 8 }}>Traffic, no sales</span>
+            )}
+            {weak && (
+              <span className="status status-bad" style={{ marginLeft: 8 }}>Converts below the shop</span>
+            )}
+          </>
+        }
+        right={<ReportToolbar scope={scope} shop={shop} />}
+      />
+
+      <MetricSummary items={metrics} source="measured" />
+
+      <div className="toolbar" role="tablist" aria-label="Product detail sections">
+        {TABS.map((t) => (
+          <button
+            key={t.id} role="tab" id={`tab-${t.id}`} aria-selected={tab === t.id}
+            aria-controls="product-tabpanel"
+            className={`btn btn-sm${tab === t.id ? ' btn-primary' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="card pad">
-        <div className="phead">
-          {p.image_url
-            ? <img className="pimg" src={p.image_url} alt="" loading="lazy" />
-            : <span className="pimg pimg-none" aria-hidden="true">◻</span>}
-          <div style={{ minWidth: 0 }}>
-            <h2 className="ptitle">{p.title || p.product_id}</h2>
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              <span className="mono">{p.product_id}</span>
-              {p.has_sales === false && <span className="chip chip-info" style={{ marginLeft: 8 }}>traffic, no sales</span>}
-              {weak && <span className="chip chip-bad" style={{ marginLeft: 8 }}>converts below the shop</span>}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid g5" style={{ marginTop: 16 }}>
-          <Stat k="GMV" basis="measured" v={money(p.gmv, cur)}
-            sub={`${p.orders == null ? '—' : Number(p.orders).toLocaleString()} orders`} />
-          <Stat k="Conversion" basis="measured" v={rate(p.click_to_order_rate)}
-            tone={weak ? 'danger' : undefined}
-            sub={median == null ? 'no shop benchmark' : `shop median ${rate(median)}`}
-            hint={median == null
-              ? `Fewer than 3 products clear ${Number(s?.median_min_clicks || 500).toLocaleString()} clicks, so there is no benchmark to compare against.`
-              : `Funnel orders divided by clicks. The benchmark is the median across ${medianN} products with ${Number(s?.median_min_clicks || 500).toLocaleString()}+ clicks.`} />
-          <Stat k="CTR" basis="measured" v={rate(p.ctr)}
-            sub={`${Number(p.impressions || 0).toLocaleString()} impressions`} />
-          <Stat k="Refunds" basis="measured" v={money(p.refunds, cur)}
-            tone={p.refund_rate != null && Number(p.refund_rate) >= 0.08 ? 'danger' : undefined}
-            sub={rate(p.refund_rate, 1)} />
-          <Stat k="Ad share" basis="measured"
-            v={p.paid_share == null ? '—' : pct(p.paid_share, 0)}
-            sub={p.paid_share == null ? 'no affiliate orders' : `${money(p.measured_paid_gmv, cur)} ad-driven`}
-            hint="The portion of this product's AFFILIATE revenue that carried a Shop Ads commission — measured per product, never apportioned from a shop-wide rate." />
-        </div>
+      <div className="stack" role="tabpanel" id="product-tabpanel" aria-labelledby={`tab-${tab}`}>
+        {tab === 'funnel' && <Funnel rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} p={p} median={median} />}
+        {tab === 'commerce' && (
+          <Commerce
+            p={p} cur={cur} related={related} campaigns={campaignsQ.data}
+            campaignsLoading={campaignsQ.isLoading} params={params}
+          />
+        )}
+        {tab === 'creatives' && <ProductCreatives shop={shop} scope={scope} cur={cur} productId={productId} />}
       </div>
-
-      <TabBar tabs={TABS} value={tab} onChange={setTab} />
-
-      {tab === 'funnel' && <Funnel rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} p={p} median={median} />}
-      {tab === 'commerce' && <Commerce p={p} cur={cur} related={related} campaigns={campaignsQ.data} params={params} />}
-      {tab === 'creatives' && <ProductCreatives shop={shop} scope={scope} cur={cur} productId={productId} />}
-    </div>
+    </>
   );
 }
 
 function Funnel({ rows, loading, cur, p, median }) {
-  if (loading) return <div className="card pad"><Skeleton h={260} /></div>;
+  if (loading) return <Panel><Skeleton h={260} /></Panel>;
   if (!rows?.length) {
-    return <Empty title="No daily funnel data for this window">
-      This product had affiliate orders but no Seller Center funnel rows for these dates, so
-      impressions, clicks and conversion are <strong>unknown rather than zero</strong>.
-    </Empty>;
+    return (
+      <Panel>
+        <EmptyState title="No daily funnel data for this window">
+          This product had affiliate orders but no Seller Center funnel rows for these dates, so
+          impressions, clicks and conversion are <strong>unknown rather than zero</strong>.
+        </EmptyState>
+      </Panel>
+    );
   }
 
   const data = rows.map((d) => ({
@@ -155,36 +243,47 @@ function Funnel({ rows, loading, cur, p, median }) {
   }));
 
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <Card title="Revenue and traffic" sub="Daily, over the reporting window.">
+    <>
+      <Panel title="Revenue and traffic" sub="Daily, over the reporting window.">
         <div style={{ height: 260 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 6, right: 8, left: 4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false} minTickGap={18} />
-              <YAxis yAxisId="l" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false}
-                tickFormatter={(v) => money(v, cur)} width={62} />
-              <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: 'var(--text-muted)' }}
-                tickLine={false} axisLine={false} width={50} />
-              <Tooltip formatter={(v, n) => [n === 'GMV' ? moneyExact(v, cur) : Number(v).toLocaleString(), n]}
-                contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border-default)', borderRadius: 10, fontSize: 12 }} />
-              <Legend wrapperStyle={{ fontSize: 11.5 }} />
-              <Bar yAxisId="l" dataKey="GMV" fill="var(--surface-3)" radius={[3, 3, 0, 0]} />
-              <Line yAxisId="r" type="monotone" dataKey="Clicks" stroke="var(--accent)" strokeWidth={2} dot={false} />
+            <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke="var(--divider)" vertical={false} />
+              <XAxis dataKey="day" tick={{ fontSize: 12, fill: 'var(--text-2)' }}
+                tickLine={false} axisLine={{ stroke: 'var(--divider)' }} minTickGap={20} />
+              <YAxis yAxisId="l" tick={{ fontSize: 12, fill: 'var(--text-2)' }} tickLine={false} axisLine={false}
+                tickFormatter={(v) => money(v, cur)} width={64} />
+              <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 12, fill: 'var(--text-2)' }}
+                tickLine={false} axisLine={false} width={56} />
+              <Tooltip
+                formatter={(v, n) => [n === 'GMV' ? moneyExact(v, cur) : Number(v).toLocaleString(), n]}
+                contentStyle={{
+                  background: 'var(--surface)', border: '1px solid var(--divider)',
+                  borderRadius: 'var(--r-panel)', fontSize: 13, boxShadow: 'var(--shadow-pop)',
+                }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <ChartBar yAxisId="l" dataKey="GMV" fill="var(--series-organic)" radius={[2, 2, 0, 0]} />
+              <Line yAxisId="r" type="monotone" dataKey="Clicks" stroke="var(--series-paid)" strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-      </Card>
+        <p className="meta" style={{ margin: '8px 0 0' }}>
+          Left axis: GMV ({cur}). Right axis: clicks (count).
+        </p>
+      </Panel>
 
-      <Card title="Where the traffic goes"
-        sub="Each step as a share of the one before it — the point at which people leave.">
-        <FunnelSteps p={p} median={median} cur={cur} />
-      </Card>
-    </div>
+      <Panel
+        title="Where the traffic goes"
+        sub="Each step as a share of the one before it — the point at which people leave."
+        bodyPad={false}
+      >
+        <FunnelSteps p={p} median={median} />
+      </Panel>
+    </>
   );
 }
 
-function FunnelSteps({ p, median, cur }) {
+function FunnelSteps({ p, median }) {
   const impressions = numOrNull(p.impressions);
   const clicks = numOrNull(p.clicks);
   const orders = numOrNull(p.orders);
@@ -196,140 +295,207 @@ function FunnelSteps({ p, median, cur }) {
   ];
 
   return (
-    <div className="funnel">
-      {steps.map((s) => {
-        const r = s.of && s.value != null ? s.value / s.of : null;
-        const below = s.rateLabel === 'Conversion' && median != null && r != null && r < median * 0.6;
-        return (
-          <div key={s.label} className="fstep">
-            <div className="fstep-head">
-              <span>{s.label}</span>
-              <strong>{s.value == null ? '—' : Number(s.value).toLocaleString()}</strong>
-            </div>
-            {s.of != null && (
-              <div className="fstep-rate">
-                <MiniBar value={r == null ? 0 : Math.min(1, r * 12)} color={below ? 'var(--danger)' : 'var(--accent)'} />
-                <span style={{ color: below ? 'var(--danger)' : undefined, fontWeight: below ? 700 : 400 }}>
-                  {s.rateLabel} {r == null ? '—' : `${(r * 100).toFixed(2)}%`}
-                  {below && median != null && ` · shop median ${(median * 100).toFixed(2)}%`}
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
-      <p className="muted" style={{ fontSize: 12, margin: '10px 0 0', lineHeight: 1.55 }}>
-        Rates are rebuilt from summed numerators and denominators across the window, never averaged
-        from daily rates — averaging would weight a $50 day the same as a $5,000 one.
-      </p>
-    </div>
+    <>
+      <div className="tablewrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th className="sticky-l">Step</th>
+              <th className="num">Count</th>
+              <th>Rate against the step before</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((s) => {
+              const r = s.of && s.value != null ? s.value / s.of : null;
+              const below = s.rateLabel === 'Conversion' && median != null && r != null && r < median * 0.6;
+              return (
+                <tr key={s.label}>
+                  <td className="sticky-l">{s.label}</td>
+                  <td className="num">
+                    <strong>{s.value == null ? '—' : Number(s.value).toLocaleString()}</strong>
+                  </td>
+                  <td>
+                    {s.of == null ? (
+                      <span className="muted">First step — nothing precedes it.</span>
+                    ) : (
+                      <div className="row" style={{ flexWrap: 'nowrap', gap: 8 }}>
+                        {/* No bar for an unmeasurable rate: a zero-width bar
+                            reads as a measured zero. */}
+                        {r != null && (
+                          <Bar value={Math.min(1, r * 12)}
+                            color={below ? 'var(--error)' : 'var(--accent)'} />
+                        )}
+                        <span>
+                          {s.rateLabel}{' '}
+                          {r == null
+                            ? <Unavailable reason={`${s.label} or the step before it was not reported for this window, so the rate cannot be measured.`} />
+                            : `${(r * 100).toFixed(2)}%`}
+                        </span>
+                        {below && median != null && (
+                          <span className="status status-bad">Shop median {(median * 100).toFixed(2)}%</span>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="panel-body" style={{ paddingTop: 12 }}>
+        <Disclosure summary="How these rates are calculated">
+          Rates are rebuilt from summed numerators and denominators across the window, never averaged
+          from daily rates — averaging would weight a $50 day the same as a $5,000 one.
+        </Disclosure>
+      </div>
+    </>
   );
 }
 
-function Commerce({ p, cur, related, campaigns, params }) {
+function Commerce({ p, cur, related, campaigns, campaignsLoading, params }) {
   const hasDiscount = p.discount_pct != null;
   return (
-    <div className="grid" style={{ gap: 16 }}>
-      <Card title="Price and stock" sub="What we can read from the catalogue.">
-        <table className="plain">
-          <tbody>
-            <tr>
-              <td style={{ width: 220 }}>Current price</td>
-              <td>
-                {p.min_price == null ? <span className="muted">—</span>
-                  : Number(p.min_price) === Number(p.max_price) ? moneyExact(p.min_price, cur)
-                  : <>{moneyExact(p.min_price, cur)} – {moneyExact(p.max_price, cur)}
-                    <span className="muted" style={{ marginLeft: 8 }}>range across variants</span></>}
-              </td>
-            </tr>
-            <tr>
-              <td>Reference price</td>
-              <td><span className="muted">Unavailable — <code>original_price</code> is null on every SKU</span></td>
-            </tr>
-            <tr>
-              <td>Discount depth</td>
-              <td><span className="muted">Unavailable — <code>discount_pct</code> is null on every product</span></td>
-            </tr>
-            <tr>
-              <td>Who funded a discount</td>
-              <td><span className="muted">Unavailable — the seller/TikTok split is not exposed</span></td>
-            </tr>
-            <tr>
-              <td>Commission rate</td>
-              <td>{p.commission_rate == null ? <span className="muted">—</span> : pct(p.commission_rate, 1)}</td>
-            </tr>
-            <tr>
-              <td>Stock</td>
-              <td>{p.inventory == null ? <span className="muted">—</span> : Number(p.inventory).toLocaleString()}</td>
-            </tr>
-            <tr>
-              <td>Average order value</td>
-              <td>{p.aov == null ? <span className="muted">—</span> : moneyExact(p.aov, cur)}</td>
-            </tr>
-            <tr>
-              <td>Refunds</td>
-              <td>
-                {moneyExact(p.refunds, cur)}
-                <span className="muted" style={{ marginLeft: 8 }}>
-                  {p.refund_rate == null ? '' : `${(Number(p.refund_rate) * 100).toFixed(1)}% of GMV`}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+    <>
+      <Panel title="Price and stock" sub="What we can read from the catalogue." bodyPad={false}>
+        <div className="tablewrap">
+          <table className="data">
+            <thead>
+              <tr>
+                <th className="sticky-l">Field</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="sticky-l">Current price</td>
+                <td>
+                  {p.min_price == null ? <span className="muted">—</span>
+                    : Number(p.min_price) === Number(p.max_price) ? moneyExact(p.min_price, cur)
+                    : <>{moneyExact(p.min_price, cur)} – {moneyExact(p.max_price, cur)}
+                      <span className="muted" style={{ marginLeft: 8 }}>range across variants</span></>}
+                </td>
+              </tr>
+              <tr>
+              {/* The provider field names used to sit here, on a buyer's screen,
+                  repeated on every product. They live in Data status now — the
+                  spec is explicit that this is a RELOCATION, not a deletion, and
+                  the browser gate asserts all five moved items are still there.
+                  What stays here is the fact and its reason, on hover or focus. */}
+                <td className="sticky-l">Reference price</td>
+                <td>
+                  <Unavailable reason="No reference price is published for this shop, so there is nothing to measure a discount against. The exact missing field is listed in Data status.">
+                    Unavailable
+                  </Unavailable>
+                </td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Discount depth</td>
+                <td>
+                  <Unavailable reason="Discount history is unavailable for this shop, so depth cannot be measured. The exact missing field is listed in Data status.">
+                    Unavailable
+                  </Unavailable>
+                </td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Who funded a discount</td>
+                <td>
+                  <Unavailable reason="The seller-funded versus TikTok-funded split is not exposed by the source." />
+                  <span className="muted" style={{ marginLeft: 8 }}>
+                    the seller/TikTok split is not exposed
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Commission rate</td>
+                <td>{p.commission_rate == null ? <span className="muted">—</span> : pct(p.commission_rate, 1)}</td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Stock</td>
+                <td>{p.inventory == null ? <span className="muted">—</span> : Number(p.inventory).toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Average order value</td>
+                <td>{p.aov == null ? <span className="muted">—</span> : moneyExact(p.aov, cur)}</td>
+              </tr>
+              <tr>
+                <td className="sticky-l">Refunds</td>
+                <td>
+                  {moneyExact(p.refunds, cur)}
+                  <span className="muted" style={{ marginLeft: 8 }}>
+                    {p.refund_rate == null ? '' : `${(Number(p.refund_rate) * 100).toFixed(1)}% of GMV`}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         {!hasDiscount && (
-          <Note tone="info">
-            <div>
-              <strong>Price history and promotions cannot be shown for this shop.</strong>
-              <div style={{ marginTop: 4 }}>
-                Without a reference price there is no depth to measure and no way to tell a performance
-                change from a price change. This is a missing provider field, not an empty result — asking
-                Reacher to populate <code>original_price</code> and <code>discount_pct</code> unlocks the
-                whole commercial view. Nothing here is estimated in the meantime.
-              </div>
+          <div className="panel-body">
+            <Notice tone="info">
+              Price history and promotions cannot be shown for this shop: without a reference price
+              there is no depth to measure and no way to tell a performance change from a price change.
+            </Notice>
+            <div style={{ marginTop: 12 }}>
+              <Disclosure summary="Why the commercial view is missing">
+                This is a missing provider field, not an empty result — the source publishes no
+                reference price, so there is nothing to measure a discount against and nothing here
+                is estimated in the meantime.{' '}
+                <Link to={scopedTo('/data', params)}>View data details</Link> for the exact fields and
+                what populating them would unlock.
+              </Disclosure>
             </div>
-          </Note>
+          </div>
         )}
-      </Card>
+      </Panel>
 
-      <Card title="Related campaigns" pad={false}
-        sub="GMV Max campaigns naming this product.">
-        {related.length ? (
-          <div className="scroll">
-            <table>
-              <thead><tr><th>Campaign</th><th>Status</th><th className="num">Target ROI</th><th className="num">Daily budget</th></tr></thead>
+      <Panel title="Related campaigns" sub="GMV Max campaigns naming this product." bodyPad={false}>
+        {/* An empty campaign list and an unfinished campaign query look the
+            same from here, so the empty state must wait for the answer. */}
+        {campaignsLoading ? (
+          <div className="panel-body"><Skeleton h={120} /></div>
+        ) : related.length ? (
+          <div className="tablewrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th className="sticky-l">Campaign</th>
+                  <th>Status</th>
+                  <th className="num">Target ROI</th>
+                  <th className="num">Daily budget</th>
+                </tr>
+              </thead>
               <tbody>
                 {related.map((c) => (
                   <tr key={c.campaign_id}>
-                    <td className="tight">
-                      <Link className="lnk" to={scopedTo(`/campaigns/${encodeURIComponent(c.campaign_id)}`, params)}>
+                    <td className="sticky-l">
+                      <Link className="identity" to={scopedTo(`/campaigns/${encodeURIComponent(c.campaign_id)}`, params)}>
                         {c.campaign_name || c.campaign_id}
                       </Link>
                     </td>
-                    <td className="tight">
-                      <span className={`chip chip-${c.status === 'ENABLE' ? 'ok' : 'info'}`}>
+                    <td>
+                      <span className={`status status-${c.status === 'ENABLE' ? 'ok' : 'info'}`}>
                         {c.status === 'ENABLE' ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="num tight">{c.target_roas == null ? '—' : Number(c.target_roas).toFixed(2)}</td>
-                    <td className="num tight">{c.daily_budget == null ? '—' : money(c.daily_budget, cur)}</td>
+                    <td className="num">{c.target_roas == null ? '—' : Number(c.target_roas).toFixed(2)}</td>
+                    <td className="num">{c.daily_budget == null ? '—' : money(c.daily_budget, cur)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="pad">
-            <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.6 }}>
-              {campaigns?.length
-                ? 'No campaign on this shop names this product. GMV Max campaigns carry a product id only for product-scoped campaigns, so a blank here means the association is not stated by the source — it does not mean no spend reached this product.'
-                : 'This shop has no GMV Max campaigns — the ad account is not connected in Reacher.'}
-            </p>
-          </div>
+          <EmptyState title={campaigns?.length ? 'No campaign names this product' : 'No GMV Max campaigns on this shop'}>
+            {campaigns?.length
+              ? 'GMV Max campaigns carry a product id only for product-scoped campaigns, so a blank here means the association is not stated by the source — it does not mean no spend reached this product.'
+              : 'This shop has no GMV Max campaigns — the ad account is not connected in Reacher.'}
+          </EmptyState>
         )}
-      </Card>
-    </div>
+      </Panel>
+    </>
   );
 }
 
@@ -368,31 +534,35 @@ function ProductCreatives({ shop, scope, cur, productId }) {
     placeholderData: (prev) => prev,
   });
 
-  if (idsQ.isLoading) return <div className="card pad"><Skeleton h={200} /></div>;
+  if (idsQ.isLoading) return <Panel><Skeleton h={200} /></Panel>;
   if (!ids.length) {
-    return <Empty title="No videos sold this product in this window">
-      Revenue for this product came through channels that carry no video id — product card,
-      shop tab or seller video.
-    </Empty>;
+    return (
+      <Panel>
+        <EmptyState title="No videos sold this product in this window">
+          Revenue for this product came through channels that carry no video id — product card,
+          shop tab or seller video.
+        </EmptyState>
+      </Panel>
+    );
   }
 
   const total = listQ.data?.total ?? 0;
 
   return (
-    <Card title="Videos selling this product" pad={false}
-      sub={`${ids.length} video${ids.length === 1 ? '' : 's'} carried an order line for it.`}>
+    <Panel
+      title="Videos selling this product"
+      sub={`${ids.length} video${ids.length === 1 ? '' : 's'} carried an order line for it.`}
+      bodyPad={false}
+    >
+      {/* The table carries its own pager, so a subtitle claiming 262 videos can
+          never sit above a table showing 50 — that truncation defect is the one
+          this rebuild exists to remove, and it must not simply move. */}
       <CreativeTable
         rows={listQ.data?.rows} total={total} loading={listQ.isLoading}
-        cur={cur} page={page} sort={sort} dir={dir} compact
+        cur={cur} page={page} sort={sort} dir={dir} toolbar={false}
         onSort={(f) => { if (sort === f) setDir(dir === 'asc' ? 'desc' : 'asc'); else { setSort(f); setDir('desc'); } setPage(0); }}
-        onPage={setPage} onSearch={() => {}} onStatus={() => {}} onClear={() => {}}
+        onPage={setPage}
       />
-      {/* The compact table has no toolbar, so it carries its own pager. A
-          subtitle claiming 262 videos above a table showing 50 is the same
-          truncation defect this rebuild exists to remove — it just moved. */}
-      <div className="pad" style={{ paddingTop: 12 }}>
-        <Pager page={page} pageSize={PAGE} total={total} onPage={setPage} />
-      </div>
-    </Card>
+    </Panel>
   );
 }

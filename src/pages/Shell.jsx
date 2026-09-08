@@ -1,29 +1,50 @@
-// App shell: shop, reporting window, navigation, data status.
+// The application shell: 56px header, 208px sidebar, full-width workspace.
 //
-// ── WHAT CHANGED ───────────────────────────────────────────────────────────
-// The old shell rendered every shop as a large card in a row that grew with the
-// brand list, and repeated connection warnings across every screen. It also
-// computed the window as `days + SETTLING_DAYS` back to `SETTLING_DAYS` back,
-// which is days+1 inclusive dates — so "Last 7 days" was eight.
+// ── WHAT THIS REPLACES ─────────────────────────────────────────────────────
+// A horizontal tab bar that could not fit its own contents at 1366 (brand,
+// seven tabs, shop, dates, status, user and sign-out come to roughly 1450px),
+// so it wrapped to two rows — and to three when forced not to. Navigation that
+// changes height depending on viewport width is navigation you cannot lay a
+// page out against.
 //
-// Now: one compact shop selector, one date control, one data-status pill, and
-// the window comes from reportWindow() which is the only place that arithmetic
-// exists.
-import { useMemo, useState } from 'react';
+// A sidebar also gives primary and secondary navigation different weight
+// without hiding either, and it collapses to a rail rather than disappearing.
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
 import { shopSummary, syncRuns, shopReconciliation, shopPaidRoas, money } from '../lib/api.js';
 import { useScope, RANGES, scopedTo } from '../lib/scope.js';
-import { Skeleton, Note, Empty } from '../components/ui.jsx';
+import { Skeleton, Notice, EmptyState } from '../components/ui.jsx';
 
-const TABS = [
-  { to: '/overview',    label: 'Overview' },
-  { to: '/campaigns',   label: 'Campaigns' },
-  { to: '/creatives',   label: 'Creatives' },
-  { to: '/products',    label: 'Products' },
-  { to: '/organic',     label: 'Organic' },
-  { to: '/attribution', label: 'Attribution' },
+const I = {
+  overview: 'M3 12h4l2 6 4-14 2 8h6',
+  campaigns: 'M4 19V9m5 10V5m5 14v-7m5 7V8',
+  creatives: 'M2 5h20v14H2zM10 9l5 3-5 3z',
+  products: 'M3 6h18v14H3zM3 6l2-3h14l2 3M9 11h6',
+  organic: 'M12 21c5-3 8-7 8-12a8 8 0 0 0-16 0c0 5 3 9 8 12zM12 3v18',
+  attribution: 'M21 21H3V3M7 15l4-5 3 3 5-7',
+  outreach: 'M4 5h16v12H8l-4 4z',
+  data: 'M12 3c4 0 8 1 8 3v12c0 2-4 3-8 3s-8-1-8-3V6c0-2 4-3 8-3zM4 10c0 2 4 3 8 3s8-1 8-3',
+};
+
+const Icon = ({ d }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={d} />
+  </svg>
+);
+
+const PRIMARY = [
+  { to: '/overview',  label: 'Overview',  icon: I.overview },
+  { to: '/campaigns', label: 'Campaigns', icon: I.campaigns },
+  { to: '/creatives', label: 'Creatives', icon: I.creatives },
+  { to: '/products',  label: 'Products',  icon: I.products },
+];
+
+const SECONDARY = [
+  { to: '/organic',     label: 'Organic',     icon: I.organic },
+  { to: '/attribution', label: 'Attribution', icon: I.attribution },
 ];
 
 export default function Shell({ session, profile }) {
@@ -31,6 +52,7 @@ export default function Shell({ session, profile }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [navOpen, setNavOpen] = useState(false);
 
   const summaryQ = useQuery({
     queryKey: ['summary', scope.start, scope.end],
@@ -50,227 +72,155 @@ export default function Shell({ session, profile }) {
     reporting_timezone: active.reporting_timezone,
   };
 
-  const tabs = useMemo(
-    () => (profile?.role === 'boss'
-      ? [...TABS, { to: '/outreach', label: 'Outreach' }]
-      : TABS),
-    [profile?.role],
+  const secondary = profile?.role === 'boss'
+    ? [...SECONDARY, { to: '/outreach', label: 'Outreach', icon: I.outreach }]
+    : SECONDARY;
+
+  const link = (t) => (
+    <NavLink key={t.to} to={scopedTo(t.to, params)} onClick={() => setNavOpen(false)}
+      className={({ isActive }) => `navlink${isActive ? ' active' : ''}`}>
+      <Icon d={t.icon} />
+      <span className="navlabel">{t.label}</span>
+    </NavLink>
   );
 
   return (
-    <>
-      {/* TWO THIN BARS, not one that wraps.
-          Everything on one row does not fit at 1366 — brand, seven tabs, shop,
-          dates, status, user and sign-out come to roughly 1450px — so the bar
-          wrapped to two rows, and forcing nowrap made it wrap to three and
-          pushed the page sideways on a phone. Both measured in the browser.
-          A predictable 48px + 40px beats an unpredictable 90-130px. */}
-      <div className="topbar">
-        <div className="brand">GMV Intelligence</div>
+    <div className="shell">
+      <header className="appheader">
+        <button className="btn btn-quiet btn-sm menubtn" onClick={() => setNavOpen((v) => !v)}
+          aria-label="Menu" aria-expanded={navOpen}
+          style={{ display: 'none' }}>☰</button>
+        <div className="wordmark">WURX <span>GMV Intelligence</span></div>
         <div className="spacer" />
-
         <ShopSelect shops={shops} active={active} onPick={scope.setShop} loading={summaryQ.isLoading} />
+        <AccountMenu profile={profile} session={session} />
+      </header>
 
-        <DateControl scope={scope} shop={shop} />
+      <nav className={`sidebar${navOpen ? ' open' : ''}`} aria-label="Sections">
+        {PRIMARY.map(link)}
+        <div className="navgroup">More</div>
+        {secondary.map(link)}
+        <div className="sidebar-foot">
+          <DataStatusLink shop={shop} scope={scope}
+            onOpen={() => { setNavOpen(false); navigate(scopedTo('/data', params)); }} />
+        </div>
+      </nav>
 
-        <DataStatusPill shop={shop} scope={scope} onOpen={() => navigate(scopedTo('/data', params))} />
-
-        <span className="muted whoami">{profile?.display_name || session.user.email}</span>
-        <button className="btn" onClick={() => supabase.auth.signOut()}>Sign out</button>
-      </div>
-
-      <div className="navbar">
-        <nav className="nav">
-          {tabs.map((t) => (
-            <NavLink key={t.to} to={scopedTo(t.to, params)}
-              className={({ isActive }) => (isActive ? 'active' : undefined)}>
-              {t.label}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
-
-      <div className="wrap">
+      <main className="main">
         {summaryQ.isLoading && (
-          <div className="grid" style={{ gap: 16 }}>
-            <div className="card pad"><Skeleton h={90} /></div>
-            <div className="grid g4">{[0, 1, 2, 3].map((i) => <div key={i} className="card pad"><Skeleton h={54} /></div>)}</div>
-          </div>
+          <>
+            <Skeleton h={32} w={220} />
+            <Skeleton h={88} />
+            <Skeleton h={280} />
+          </>
         )}
 
-        {summaryQ.error && <Note tone="warn">Could not load shops: {summaryQ.error.message}</Note>}
+        {summaryQ.error && (
+          <Notice tone="error">Could not load shops: {summaryQ.error.message}</Notice>
+        )}
 
         {!summaryQ.isLoading && !shops.length && (
-          <Empty title="No shops are visible to your account">
-            Your account has no shop access yet. Ask the Boss to grant it — this is a permission,
-            not a data problem, so nothing here will change until it is granted.
-          </Empty>
+          <section className="panel">
+            <EmptyState title="No shops are visible to your account">
+              Your account has no shop access yet. Ask the Boss to grant it — this is a permission,
+              not a data problem, so nothing here will change until it is granted.
+            </EmptyState>
+          </section>
         )}
 
         {/* Remounting on shop change is what stops the previous shop's chart
             sitting under the new shop's header while the queries settle. */}
         {shop && (
-          <div key={`${shop.id}-${location.pathname}`}>
+          <div key={`${shop.id}-${location.pathname}`} className="stack">
             <Outlet context={{ shop, scope, profile, shops }} />
           </div>
         )}
-      </div>
-    </>
-  );
-}
-
-/**
- * ONE date control: presets, a custom range, the exact dates, the comparison
- * period, and the timezone the days are cut in.
- *
- * All five matter and all five were missing. The exact dates because "Last 30
- * days" ending two days ago is not what anyone pictures; the comparison period
- * because every trend on the app is measured against it and it was never
- * stated; the timezone because Reacher cuts its days in Los Angeles, not UTC,
- * so a "day" here is not the day a reader assumes.
- */
-function DateControl({ scope, shop }) {
-  const [open, setOpen] = useState(false);
-  const [from, setFrom] = useState(scope.start);
-  const [to, setTo] = useState(scope.end);
-
-  const apply = () => {
-    if (from && to && from <= to) { scope.setCustom(from, to); setOpen(false); }
-  };
-
-  return (
-    <div className="datectl">
-      <select className="input" value={scope.custom ? 'custom' : scope.days}
-        aria-label="Reporting window"
-        onChange={(e) => {
-          if (e.target.value === 'custom') { setOpen(true); return; }
-          scope.setDays(Number(e.target.value));
-        }}>
-        {RANGES.map((d) => <option key={d} value={d}>Last {d} days</option>)}
-        <option value="custom">{scope.custom ? 'Custom range' : 'Custom range…'}</option>
-      </select>
-
-      <button className="windowbtn" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        title="Exact dates, comparison period and reporting timezone">
-        {scope.start} → {scope.end}
-        <span style={{ opacity: .7 }}> · {scope.spanDays}d</span>
-      </button>
-
-      {open && (
-        <div className="datepop">
-          <div className="k">Custom range</div>
-          <div className="daterow">
-            <label>
-              <span>From</span>
-              <input className="input" type="date" value={from} max={to}
-                onChange={(e) => setFrom(e.target.value)} />
-            </label>
-            <label>
-              <span>To</span>
-              <input className="input" type="date" value={to} min={from}
-                onChange={(e) => setTo(e.target.value)} />
-            </label>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button className="btn btn-primary" onClick={apply} disabled={!(from && to && from <= to)}>Apply</button>
-            {scope.custom && (
-              <button className="btn" onClick={() => { scope.setCustom(null, null); setOpen(false); }}>
-                Back to presets
-              </button>
-            )}
-          </div>
-
-          <div className="datefacts">
-            <div><span>Reporting</span><b>{scope.start} → {scope.end}</b><i>{scope.spanDays} days</i></div>
-            <div><span>Compared against</span><b>{scope.priorStart} → {scope.priorEnd}</b><i>{scope.priorSpanDays} days, adjacent</i></div>
-            <div><span>Model trains on</span><b>{scope.model.start} → {scope.model.end}</b><i>{scope.model.spanDays} days</i></div>
-            <div>
-              <span>Days cut in</span>
-              <b>{shop?.reporting_timezone || 'America/Los_Angeles'}</b>
-              <i>the source&rsquo;s own reporting day, not UTC</i>
-            </div>
-            {!scope.custom && (
-              <div>
-                <span>Ends</span>
-                <b>{scope.settlingDays} days back</b>
-                <i>affiliate orders keep arriving for about that long</i>
-              </div>
-            )}
-            {scope.custom && (
-              <div>
-                <span>Settlement</span>
-                <b>not applied</b>
-                <i>a custom range is used exactly as entered — recent days may still be filling in</i>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      </main>
     </div>
   );
 }
 
-/**
- * One selector that scales past three brands. Connection state lives in here
- * rather than as a banner repeated on every screen.
- */
 function ShopSelect({ shops, active, onPick, loading }) {
-  if (loading) return <div className="skel" style={{ width: 150, height: 32 }} />;
+  if (loading) return <div className="skel" style={{ width: 200, height: 36 }} />;
   if (!shops.length) return null;
   return (
     <select className="input" value={active?.shop_id || ''} aria-label="Shop"
-      onChange={(e) => onPick(e.target.value)} style={{ maxWidth: 210 }}>
+      onChange={(e) => onPick(e.target.value)} style={{ maxWidth: 230, fontWeight: 500 }}>
       {shops.map((s) => (
         <option key={s.shop_id} value={s.shop_id}>
-          {s.shop_name}
-          {Number(s.lines) ? ` — ${money(s.gmv, s.currency)}` : ' — no data'}
+          {s.shop_name}{Number(s.lines) ? ` — ${money(s.gmv, s.currency)}` : ' — no data'}
         </option>
       ))}
     </select>
   );
 }
 
+/** Account controls belong in a quiet menu, not a large button in the toolbar. */
+function AccountMenu({ profile, session }) {
+  const [open, setOpen] = useState(false);
+  const name = profile?.display_name || session.user.email;
+  const initial = String(name).trim().charAt(0).toUpperCase() || '?';
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn btn-quiet" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        aria-label={`Account: ${name}`}
+        style={{ width: 32, height: 32, padding: 0, borderRadius: '50%', background: 'var(--accent-quiet)', color: 'var(--accent-text)', fontWeight: 700 }}>
+        {initial}
+      </button>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 45 }} onClick={() => setOpen(false)} />
+          <div className="panel" style={{
+            position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 46,
+            minWidth: 220, padding: 8, boxShadow: 'var(--shadow-pop)',
+          }}>
+            <div style={{ padding: '6px 10px 10px', borderBottom: '1px solid var(--divider)' }}>
+              <div className="truncate" style={{ fontWeight: 600 }}>{name}</div>
+              {profile?.role && <div className="meta">{profile.role}</div>}
+            </div>
+            <button className="btn btn-quiet" style={{ width: '100%', justifyContent: 'flex-start', marginTop: 6 }}
+              onClick={() => supabase.auth.signOut()}>Sign out</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
- * Health, in one control, opening the detail rather than reproducing it.
- *
- * Source type and health are DIFFERENT things and are shown as different
- * things: a measured source can still be incomplete, and a simulated one can
- * still be internally consistent.
+ * Data status sits in the utility area at the foot of the sidebar and carries
+ * the current health. Source type and health are different claims: a measured
+ * source can still be incomplete, and a demo one can be internally consistent.
  */
-function DataStatusPill({ shop, scope, onOpen }) {
+function DataStatusLink({ shop, scope, onOpen }) {
   const runsQ = useQuery({
-    queryKey: ['runs', shop?.id],
-    queryFn: () => syncRuns(shop.id, 8),
-    enabled: !!shop?.id,
+    queryKey: ['runs', shop?.id], queryFn: () => syncRuns(shop.id, 8), enabled: !!shop?.id,
   });
   const reconQ = useQuery({
     queryKey: ['recon', shop?.id, scope.start, scope.end],
-    queryFn: () => shopReconciliation(shop.id, scope.start, scope.end),
-    enabled: !!shop?.id,
+    queryFn: () => shopReconciliation(shop.id, scope.start, scope.end), enabled: !!shop?.id,
   });
   const roasQ = useQuery({
     queryKey: ['roaspill', shop?.id, scope.start, scope.end],
-    queryFn: () => shopPaidRoas(shop.id, scope.start, scope.end),
-    enabled: !!shop?.id,
+    queryFn: () => shopPaidRoas(shop.id, scope.start, scope.end), enabled: !!shop?.id,
   });
-
   if (!shop) return null;
 
   const failed = (runsQ.data || []).filter((r) => r.status === 'error');
   const recon = reconQ.data;
-  const simulated = roasQ.data?.is_simulated === true;
-
-  let tone = 'ok';
-  let label = 'Healthy';
-  if (recon?.status === 'exception') { tone = 'bad'; label = 'Action required'; }
-  else if (failed.length) { tone = 'warn'; label = 'Limited data'; }
+  const tone = recon?.status === 'exception' ? 'bad' : failed.length ? 'warn' : 'ok';
+  const label = recon?.status === 'exception' ? 'Action required'
+    : failed.length ? 'Limited data' : 'Healthy';
 
   return (
-    <button className={`statuspill statuspill-${tone}`} onClick={onOpen}
-      title="Open data status — coverage, last sync, reconciliation">
-      <span className="dot" />
-      {label}
-      {simulated && <span className="basis basis-simulated" style={{ marginLeft: 6 }}>demo</span>}
+    <button className="navlink" onClick={onOpen} style={{ width: '100%', background: 'none', border: 0, textAlign: 'left' }}
+      title={`Data status — ${label}`}>
+      <Icon d={I.data} />
+      <span className="navlabel" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span className="truncate">Data status</span>
+        <span className={`status status-${tone}`} style={{ padding: '0 6px', fontSize: 11 }} />
+        {roasQ.data?.is_simulated && <span className="sourcetag sourcetag-simulated">demo</span>}
+      </span>
     </button>
   );
 }

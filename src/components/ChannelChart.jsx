@@ -3,22 +3,27 @@
 // The chart used to stack six segments to a tidy 100% every day, because the
 // overflow bucket was clamped to zero before it got here. Days where the
 // components do not add up now carry a mark, and the caption says how many.
+//
+// Colours come from the --series-* tokens, so a channel is the same colour
+// here, in the mix bar and in the channel table. Colour carries information —
+// which channel — so it stays chromatic; nothing else here introduces a value
+// of its own.
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceDot,
 } from 'recharts';
-import { Card, Skeleton, money, moneyExact } from './ui.jsx';
+import { Panel, Skeleton, EmptyState, money, moneyExact } from './ui.jsx';
 
 const SERIES = [
-  ['Ad-driven', 'var(--paid)'],
-  ['Organic', 'var(--organic)'],
-  ['Affiliate (no line data)', 'var(--border-default)'],
-  ['Affiliate (excess)', 'var(--danger)'],
-  ['Seller video', 'var(--text-muted)'],
-  ['LIVE', 'var(--text-muted)'],
-  ['Product card', 'var(--surface-3)'],
+  ['Ad-driven', 'var(--series-paid)'],
+  ['Organic', 'var(--series-organic)'],
+  ['Affiliate (no line data)', 'var(--series-gap)'],
+  ['Affiliate (excess)', 'var(--series-excess)'],
+  ['Seller video', 'var(--series-seller)'],
+  ['LIVE', 'var(--series-live)'],
+  ['Product card', 'var(--series-card)'],
 ];
 
-export default function ChannelChart({ rows, loading, cur }) {
+export default function ChannelChart({ rows, loading, cur, title = 'Daily revenue by channel' }) {
   const data = (rows || []).map((d) => ({
     day: String(d.day).slice(5),
     fullDay: d.day,
@@ -35,23 +40,30 @@ export default function ChannelChart({ rows, loading, cur }) {
 
   const bad = data.filter((d) => d._status === 'exception');
 
+  // While the days are still arriving, say nothing about them: "0 of 0 days do
+  // not reconcile" is a claim, and not one this component can make yet.
+  const sub = loading
+    ? 'Stacked to the shop total, one day at a time.'
+    : bad.length
+      ? `${bad.length} of ${data.length} days do not reconcile against total shop GMV — marked below the axis.`
+      : 'Stacked to the shop total. The coloured band is the part that carries a commission signal.';
+
   return (
-    <Card
-      title="Daily revenue by channel"
-      sub={bad.length
-        ? `${bad.length} of ${data.length} days do not reconcile against total shop GMV — marked in red below.`
-        : 'Stacked to the shop total. The coloured band is the part that carries a commission signal.'}
-    >
-      {loading ? <Skeleton h={260} /> : (
-        <>
+    <Panel title={title} sub={sub} bodyPad={false}>
+      <div className="panel-body">
+        {loading ? <Skeleton h={290} /> : !data.length ? (
+          <EmptyState title="No daily channel data in this window">
+            Nothing has been collected for these dates, so there is no series to draw.
+          </EmptyState>
+        ) : (
           <div style={{ height: 290 }}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data} margin={{ top: 6, right: 8, left: 4, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)' }}
-                  tickLine={false} axisLine={false} minTickGap={18} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} tickLine={false} axisLine={false}
-                  tickFormatter={(v) => money(v, cur)} width={62} />
+                <CartesianGrid stroke="var(--divider)" vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 12, fill: 'var(--text-2)' }}
+                  tickLine={false} axisLine={{ stroke: 'var(--divider)' }} minTickGap={18} />
+                <YAxis tick={{ fontSize: 12, fill: 'var(--text-2)' }} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => money(v, cur)} width={68} />
                 <Tooltip
                   formatter={(v, n) => [moneyExact(v, cur), n]}
                   labelFormatter={(l) => {
@@ -60,29 +72,39 @@ export default function ChannelChart({ rows, loading, cur }) {
                       ? `${l} — does not reconcile (${moneyExact(row._gap, cur)})`
                       : l;
                   }}
-                  contentStyle={{ background: 'var(--surface-1)', border: '1px solid var(--border-default)', borderRadius: 10, fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 11.5 }} />
+                  contentStyle={{
+                    background: 'var(--surface)', border: '1px solid var(--divider)',
+                    borderRadius: 'var(--r-panel)', fontSize: 13, boxShadow: 'var(--shadow-pop)',
+                  }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                 {SERIES.map(([k, c]) => (
                   <Area key={k} type="monotone" dataKey={k} stackId="1" stroke={c} fill={c}
                     fillOpacity={k === 'Ad-driven' || k === 'Organic' ? 0.32 : k === 'Affiliate (excess)' ? 0.5 : 0.16} />
                 ))}
+                {/* The reconciliation marks. A day whose components do not add
+                    up is not quietly redrawn as if they did. */}
                 {bad.map((d) => (
                   <ReferenceDot key={d.day} x={d.day} y={0} r={4}
-                    fill="var(--danger)" stroke="none" ifOverflow="extendDomain" />
+                    fill="var(--series-excess)" stroke="none" ifOverflow="extendDomain" />
                 ))}
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          {bad.length > 0 && (
-            <p className="muted" style={{ fontSize: 11.5, marginTop: 10, marginBottom: 0, lineHeight: 1.55 }}>
-              <strong>Affiliate (excess)</strong> is revenue our order lines hold that Seller Center&rsquo;s own
-              affiliate figure does not. It used to be deleted so the stack would total exactly 100% — which
-              made a real disagreement between two sources look like perfect agreement. It is shown because
-              it is real.
-            </p>
-          )}
-        </>
+        )}
+      </div>
+
+      {!loading && bad.length > 0 && (
+        <details className="panel-body" style={{ borderTop: '1px solid var(--divider)' }}>
+          <summary style={{ cursor: 'pointer' }}>What the marks and the excess band mean</summary>
+          <p className="meta" style={{ margin: '8px 0 0', maxWidth: '78ch' }}>
+            <strong>Affiliate (excess)</strong> is revenue our order lines hold that Seller Center&rsquo;s
+            own affiliate figure does not. It used to be deleted so the stack would total exactly 100% —
+            which made a real disagreement between two sources look like perfect agreement. It is shown
+            because it is real. A mark under a day says that day&rsquo;s components do not sum to its shop
+            total; the amount is in the tooltip.
+          </p>
+        </details>
       )}
-    </Card>
+    </Panel>
   );
 }

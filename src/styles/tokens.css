@@ -1,0 +1,175 @@
+/* ============================================================
+   The design tokens. One place, semantic names, no one-off hex.
+   ============================================================
+
+   These are WURX defaults chosen to sit comfortably next to TikTok Shop
+   Seller Center — a light working surface, a restrained teal action colour,
+   dense readable tables. They are NOT claims about TikTok's own CSS.
+
+   Two rules that the previous stylesheet broke and this one exists to hold:
+
+   1. NO COLOUR IS DEFINED ONLY INSIDE A MEDIA QUERY. Every token has a value
+      on bare :root first, so the un-stamped (system-preference) state always
+      resolves. A token that exists only under `prefers-color-scheme: dark` is
+      the classic unreadable-page bug.
+
+   2. STATE COLOURS ARE SEPARATE FROM THE ACCENT. Red means error, not brand.
+      An ordinary metric is dark neutral text, not accent-coloured.
+============================================================ */
+
+:root {
+  /* Surfaces. White is the working surface; the app background only
+     separates major regions. */
+  --bg:              #F6F7F8;
+  --surface:         #FFFFFF;
+  --surface-sunken:  #F7F8FA;   /* table headers, quiet strips */
+  --surface-hover:   #F2F4F5;
+  --overlay:         rgba(22, 24, 35, .34);
+
+  /* Text. Essential text must clear 4.5:1 on --surface. */
+  --text:            #161823;
+  --text-2:          #5F6368;
+  --text-3:          #80868B;   /* metadata only, never an essential label */
+  --text-on-accent:  #FFFFFF;
+
+  /* Lines */
+  --divider:         #E5E7EB;
+  --divider-strong:  #D5D8DD;
+
+  /* Interaction. One accent, used for actions and selection — not for every
+     number, link and status. */
+  --accent:          #007F7B;
+  --accent-hover:    #006763;
+  --accent-active:   #005A57;
+  --accent-quiet:    #E8F5F4;
+  --accent-text:     #00615E;   /* accent text on light backgrounds, contrast-safe */
+
+  /* State. Used with a label or icon, never colour alone. */
+  --error:           #B42318;
+  --error-quiet:     #FEF3F2;
+  --warning:         #8A4B08;
+  --warning-quiet:   #FFFAEB;
+  --positive:        #167347;
+  --positive-quiet:  #ECFDF3;
+  --info-quiet:      #F0F4F8;
+
+  /* Data series. Colour distinguishes channels; that is information, so these
+     stay chromatic even in a restrained theme. */
+  --series-paid:     #1D6FD0;
+  --series-organic:  #167347;
+  --series-gap:      #B0B6BE;
+  --series-excess:   #B42318;
+  --series-seller:   #7A8290;
+  --series-live:     #9AA1AB;
+  --series-card:     #CBD1D8;
+
+  /* Structure */
+  --header-h:        56px;
+  --sidebar-w:       208px;
+  --rail-w:          56px;
+
+  /* Spacing scale — 4, 8, 12, 16, 24, 32 */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  /* Radii. Small for controls, modest for panels, one step more for drawers. */
+  --r-control: 4px;
+  --r-panel:   6px;
+  --r-drawer:  8px;
+  --r-pill:    999px;
+
+  /* Elevation. Nothing at rest — only things that float. */
+  --shadow-pop:    0 4px 16px rgba(22, 24, 35, .12), 0 0 0 1px rgba(22, 24, 35, .04);
+  --shadow-drawer: -8px 0 32px rgba(22, 24, 35, .14);
+
+  /* Motion */
+  --t: 140ms cubic-bezier(.2, 0, .2, 1);
+
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+}
+
+/* Dark is a considered variant, not an inversion. Only tokens are redefined;
+   no component rule lives in here. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:              #0F1115;
+    --surface:         #171A1F;
+    --surface-sunken:  #1C2027;
+    --surface-hover:   #22272F;
+    --overlay:         rgba(0, 0, 0, .55);
+
+    --text:            #E8EAED;
+    --text-2:          #A8AEB6;
+    --text-3:          #858C95;
+    --text-on-accent:  #04211F;
+
+    --divider:         #272C33;
+    --divider-strong:  #363C45;
+
+    --accent:          #2FB3AD;
+    --accent-hover:    #45C2BC;
+    --accent-active:   #58CFC9;
+    --accent-quiet:    #12312F;
+    --accent-text:     #6FD3CD;
+
+    --error:           #F27A70;
+    --error-quiet:     #2C1614;
+    --warning:         #E0A44B;
+    --warning-quiet:   #2A2010;
+    --positive:        #4EC08A;
+    --positive-quiet:  #10281C;
+    --info-quiet:      #1A2029;
+
+    --series-paid:     #5C9BE8;
+    --series-organic:  #4EC08A;
+    --series-gap:      #5A626C;
+    --series-excess:   #F27A70;
+    --series-seller:   #8B939E;
+    --series-live:     #6E767F;
+    --series-card:     #3B424B;
+
+    --shadow-pop:    0 4px 16px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .05);
+    --shadow-drawer: -8px 0 32px rgba(0, 0, 0, .55);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:              #0F1115;
+  --surface:         #171A1F;
+  --surface-sunken:  #1C2027;
+  --surface-hover:   #22272F;
+  --overlay:         rgba(0, 0, 0, .55);
+
+  --text:            #E8EAED;
+  --text-2:          #A8AEB6;
+  --text-3:          #858C95;
+  --text-on-accent:  #04211F;
+
+  --divider:         #272C33;
+  --divider-strong:  #363C45;
+
+  --accent:          #2FB3AD;
+  --accent-hover:    #45C2BC;
+  --accent-active:   #58CFC9;
+  --accent-quiet:    #12312F;
+  --accent-text:     #6FD3CD;
+
+  --error:           #F27A70;
+  --error-quiet:     #2C1614;
+  --warning:         #E0A44B;
+  --warning-quiet:   #2A2010;
+  --positive:        #4EC08A;
+  --positive-quiet:  #10281C;
+  --info-quiet:      #1A2029;
+
+  --series-paid:     #5C9BE8;
+  --series-organic:  #4EC08A;
+  --series-gap:      #5A626C;
+  --series-excess:   #F27A70;
+  --series-seller:   #8B939E;
+  --series-live:     #6E767F;
+  --series-card:     #3B424B;
+
+  --shadow-pop:    0 4px 16px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .05);
+  --shadow-drawer: -8px 0 32px rgba(0, 0, 0, .55);
+}
