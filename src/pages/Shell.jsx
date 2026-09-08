@@ -9,7 +9,7 @@
 // Now: one compact shop selector, one date control, one data-status pill, and
 // the window comes from reportWindow() which is the only place that arithmetic
 // exists.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
@@ -22,6 +22,7 @@ const TABS = [
   { to: '/campaigns',   label: 'Campaigns' },
   { to: '/creatives',   label: 'Creatives' },
   { to: '/products',    label: 'Products' },
+  { to: '/organic',     label: 'Organic' },
   { to: '/attribution', label: 'Attribution' },
 ];
 
@@ -46,6 +47,7 @@ export default function Shell({ session, profile }) {
     shop_name: active.shop_name,
     currency: active.currency,
     affiliate_connected: active.affiliate_connected,
+    reporting_timezone: active.reporting_timezone,
   };
 
   const tabs = useMemo(
@@ -73,19 +75,7 @@ export default function Shell({ session, profile }) {
 
         <ShopSelect shops={shops} active={active} onPick={scope.setShop} loading={summaryQ.isLoading} />
 
-        <select className="input" value={scope.days} aria-label="Reporting window"
-          onChange={(e) => scope.setDays(Number(e.target.value))}>
-          {RANGES.map((d) => <option key={d} value={d}>Last {d} days</option>)}
-        </select>
-
-        {/* The window, spelled out. "Last 30 days" ending two days ago is not
-            what most people picture, and a window that is not stated is one
-            that gets misread. spanDays is asserted, not assumed. */}
-        <span className="muted windowlabel"
-          title={`Exactly ${scope.spanDays} inclusive days. Affiliate orders keep arriving for about ${scope.settlingDays} days, so the window ends where the data has settled — including today would show a collapse on the last day, every day.`}>
-          {scope.start} → {scope.end}
-          <span style={{ opacity: .7 }}> · {scope.spanDays}d</span>
-        </span>
+        <DateControl scope={scope} shop={shop} />
 
         <DataStatusPill shop={shop} scope={scope} onOpen={() => navigate(scopedTo('/data', params))} />
 
@@ -121,6 +111,97 @@ export default function Shell({ session, profile }) {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * ONE date control: presets, a custom range, the exact dates, the comparison
+ * period, and the timezone the days are cut in.
+ *
+ * All five matter and all five were missing. The exact dates because "Last 30
+ * days" ending two days ago is not what anyone pictures; the comparison period
+ * because every trend on the app is measured against it and it was never
+ * stated; the timezone because Reacher cuts its days in Los Angeles, not UTC,
+ * so a "day" here is not the day a reader assumes.
+ */
+function DateControl({ scope, shop }) {
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState(scope.start);
+  const [to, setTo] = useState(scope.end);
+
+  const apply = () => {
+    if (from && to && from <= to) { scope.setCustom(from, to); setOpen(false); }
+  };
+
+  return (
+    <div className="datectl">
+      <select className="input" value={scope.custom ? 'custom' : scope.days}
+        aria-label="Reporting window"
+        onChange={(e) => {
+          if (e.target.value === 'custom') { setOpen(true); return; }
+          scope.setDays(Number(e.target.value));
+        }}>
+        {RANGES.map((d) => <option key={d} value={d}>Last {d} days</option>)}
+        <option value="custom">{scope.custom ? 'Custom range' : 'Custom range…'}</option>
+      </select>
+
+      <button className="windowbtn" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        title="Exact dates, comparison period and reporting timezone">
+        {scope.start} → {scope.end}
+        <span style={{ opacity: .7 }}> · {scope.spanDays}d</span>
+      </button>
+
+      {open && (
+        <div className="datepop">
+          <div className="k">Custom range</div>
+          <div className="daterow">
+            <label>
+              <span>From</span>
+              <input className="input" type="date" value={from} max={to}
+                onChange={(e) => setFrom(e.target.value)} />
+            </label>
+            <label>
+              <span>To</span>
+              <input className="input" type="date" value={to} min={from}
+                onChange={(e) => setTo(e.target.value)} />
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button className="btn btn-primary" onClick={apply} disabled={!(from && to && from <= to)}>Apply</button>
+            {scope.custom && (
+              <button className="btn" onClick={() => { scope.setCustom(null, null); setOpen(false); }}>
+                Back to presets
+              </button>
+            )}
+          </div>
+
+          <div className="datefacts">
+            <div><span>Reporting</span><b>{scope.start} → {scope.end}</b><i>{scope.spanDays} days</i></div>
+            <div><span>Compared against</span><b>{scope.priorStart} → {scope.priorEnd}</b><i>{scope.priorSpanDays} days, adjacent</i></div>
+            <div><span>Model trains on</span><b>{scope.model.start} → {scope.model.end}</b><i>{scope.model.spanDays} days</i></div>
+            <div>
+              <span>Days cut in</span>
+              <b>{shop?.reporting_timezone || 'America/Los_Angeles'}</b>
+              <i>the source&rsquo;s own reporting day, not UTC</i>
+            </div>
+            {!scope.custom && (
+              <div>
+                <span>Ends</span>
+                <b>{scope.settlingDays} days back</b>
+                <i>affiliate orders keep arriving for about that long</i>
+              </div>
+            )}
+            {scope.custom && (
+              <div>
+                <span>Settlement</span>
+                <b>not applied</b>
+                <i>a custom range is used exactly as entered — recent days may still be filling in</i>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

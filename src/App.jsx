@@ -8,6 +8,8 @@ import CampaignsPage from './pages/CampaignsPage.jsx';
 import CampaignDetailPage from './pages/CampaignDetailPage.jsx';
 import CreativePage from './pages/CreativePage.jsx';
 import ProductsPage from './pages/ProductsPage.jsx';
+import ProductDetailPage from './pages/ProductDetailPage.jsx';
+import OrganicPage from './pages/OrganicPage.jsx';
 import AttributionPage from './pages/AttributionPage.jsx';
 import DataStatusPage from './pages/DataStatusPage.jsx';
 import OutreachPage from './pages/OutreachPage.jsx';
@@ -62,6 +64,8 @@ export default function App() {
           <Route path="campaigns/:campaignId" element={<CampaignDetailPage />} />
           <Route path="creatives" element={<CreativePage />} />
           <Route path="products" element={<ProductsPage />} />
+          <Route path="products/:productId" element={<ProductDetailPage />} />
+          <Route path="organic" element={<OrganicPage />} />
           <Route path="attribution" element={<AttributionPage />} />
           <Route path="data" element={<DataStatusPage />} />
           {profile?.role === 'boss' && <Route path="outreach" element={<OutreachPage />} />}

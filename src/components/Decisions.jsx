@@ -15,7 +15,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { setRecommendationStatus } from '../lib/api.js';
 import { ACTION } from '../lib/decide.js';
-import { Basis, Hint, StatusChip, money, pct, fixed } from './ui.jsx';
+import { Basis, Hint, StatusChip, Toolbar, money, pct, fixed } from './ui.jsx';
 
 const ICON = { critical: '⛔', warning: '⚠', info: 'ℹ', good: '✓' };
 
@@ -286,11 +286,28 @@ function DecisionActions({ rec, decision, shop, onDrill, params }) {
  */
 export function PriorityTable({ decision, shop, records }) {
   const [params] = useSearchParams();
+  const [lane, setLane] = useState('');
+  const [conf, setConf] = useState('');
   const cur = shop?.currency || 'USD';
   if (!decision?.all?.length) return null;
 
   const byFingerprint = new Map((records || []).map((r) => [r.fingerprint, r]));
-  const rows = decision.all;
+
+  // Filters the spec asks for, over the dimensions that actually exist here:
+  // which kind of work it is, and how much the evidence supports it. Filters
+  // for signals we cannot measure (promotion active, organic dependency) are
+  // deliberately absent rather than present and permanently empty.
+  const all = decision.all;
+  const rows = all.filter((r) => {
+    if (lane && r.lane !== lane) return false;
+    if (conf === 'high' && !(r.confidence >= 0.7)) return false;
+    if (conf === 'moderate' && !(r.confidence >= 0.45 && r.confidence < 0.7)) return false;
+    if (conf === 'low' && !(r.confidence != null && r.confidence < 0.45)) return false;
+    if (conf === 'blocked' && !(r.guardrails || []).some((g) => !g.passed)) return false;
+    return true;
+  });
+  const active = !!(lane || conf);
+  const clear = () => { setLane(''); setConf(''); };
 
   const href = (r) => {
     const q = new URLSearchParams();
@@ -306,7 +323,26 @@ export function PriorityTable({ decision, shop, records }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="pad" style={{ paddingBottom: 8 }}>
         <div className="k">Action queue</div>
-        <div className="sub">Ranked by evidence, severity and how much revenue is affected.</div>
+        <div className="sub">
+          Ranked by evidence, severity and how much revenue is affected — that order is fixed, so the
+          same evidence always produces the same queue.
+        </div>
+        <Toolbar count={rows.length} total={all.length} onClear={clear} active={active}>
+          <select className="input" aria-label="Filter by type of work"
+            value={lane} onChange={(e) => setLane(e.target.value)}>
+            <option value="">All work</option>
+            <option value="media">Media buying</option>
+            <option value="data">Data repair</option>
+          </select>
+          <select className="input" aria-label="Filter by confidence"
+            value={conf} onChange={(e) => setConf(e.target.value)}>
+            <option value="">Any confidence</option>
+            <option value="high">High confidence</option>
+            <option value="moderate">Moderate confidence</option>
+            <option value="low">Low confidence</option>
+            <option value="blocked">Blocked on missing data</option>
+          </select>
+        </Toolbar>
       </div>
       <div className="scroll">
         <table>
@@ -356,6 +392,11 @@ export function PriorityTable({ decision, shop, records }) {
                 </tr>
               );
             })}
+            {!rows.length && (
+              <tr><td colSpan={6} className="muted" style={{ padding: 20, textAlign: 'center' }}>
+                No actions match these filters. <button className="lnk" onClick={clear}>Clear them</button> to see all {all.length}.
+              </td></tr>
+            )}
           </tbody>
         </table>
       </div>

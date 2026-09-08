@@ -178,12 +178,25 @@ export default function ProductsPage() {
                   return (
                     <tr key={p.product_id}>
                       <td className="tight">
-                        <span className="truncate" style={{ display: 'block' }} title={p.title || p.product_id}>
-                          {p.title || p.product_id}
-                        </span>
-                        {!p.has_sales && p.days_with_data != null && (
-                          <span className="muted" style={{ fontSize: 11 }}>traffic, no sales</span>
-                        )}
+                        {/* Reacher DOES supply a product image on every product,
+                            unlike videos where no cover field exists at all. A
+                            missing one gets a neutral placeholder and the row
+                            stays usable. */}
+                        <div className="vcell">
+                          {p.image_url
+                            ? <img className="pthumb" src={p.image_url} alt="" loading="lazy" />
+                            : <span className="pthumb pthumb-none" aria-hidden="true">◻</span>}
+                          <div style={{ minWidth: 0 }}>
+                            <Link className="truncate lnk" style={{ display: 'block' }}
+                              title={p.title || p.product_id}
+                              to={scopedTo(`/products/${encodeURIComponent(p.product_id)}`, params)}>
+                              {p.title || p.product_id}
+                            </Link>
+                            {!p.has_sales && p.days_with_data != null && (
+                              <span className="muted" style={{ fontSize: 11 }}>traffic, no sales</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="num tight"><strong>{money(p.gmv, cur)}</strong></td>
                       <td className="num tight muted">{p.orders == null ? '—' : Number(p.orders).toLocaleString()}</td>
