@@ -299,9 +299,18 @@ export default function OutreachPage({ shop, end }) {
             <div className="k">Creators per day</div>
             <input className="input" type="number" min="1" max="200" style={{ width: 120, marginTop: 5 }}
               value={dailyCap} onChange={(e) => setDailyCap(e.target.value)} />
+            {/* Two different limits used to be described by one sentence, which
+                read as "you can only contact 200 creators". They are a rate and
+                a list size, and confusing them changes what someone thinks the
+                tool can do. */}
             <div className="sub">
-              {selected.length} creators ≈ {Math.max(1, Math.ceil(selected.length / Math.max(1, Number(dailyCap))))} day(s).
-              Capped at 200 by the server whatever is typed here.
+              {selected.length} creators at {dailyCap || 0}/day ≈{' '}
+              <strong>{Math.max(1, Math.ceil(selected.length / Math.max(1, Number(dailyCap))))} day(s)</strong> to work through the list.
+            </div>
+            <div className="sub" style={{ marginTop: 6 }}>
+              Limits: <strong>200 per day</strong>, <strong>500 creators per automation</strong>. Both are our own
+              safety caps, not Reacher&rsquo;s — your account allows far more (a past run reached 10,699 creators).
+              Ask and they can be raised.
             </div>
           </div>
           <label style={{ fontSize: 13, display: 'flex', alignItems: 'flex-start', gap: 8, paddingTop: 22 }}>
