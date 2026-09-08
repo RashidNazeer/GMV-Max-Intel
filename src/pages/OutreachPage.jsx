@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
-import { creatorGrowth, productCatalog, outreach, outreachLog } from '../lib/api.js';
+import { creatorGrowth, allCreatorGrowth, productCatalog, outreach, outreachLog } from '../lib/api.js';
 import { Card, Stat, Note, Skeleton, Empty, money, pct } from '../components/ui.jsx';
 
 const MAX_MESSAGE = 500;
@@ -23,12 +23,18 @@ export default function OutreachPage({ shop, end }) {
   // ── the shortlist ─────────────────────────────────────────────────────────
   const [growth, setGrowth] = useState(2);
   const [organicOnly, setOrganicOnly] = useState(false);
+  const [allShops, setAllShops] = useState(false);
   const [picked, setPicked] = useState(null);      // null = "all of them"
   const [pasted, setPasted] = useState('');
 
+  // Across-all-shops is a DISCOVERY view. The automation itself still belongs to
+  // one shop, so a creator who grew for a different shop is a colder invitation
+  // than one who grew for this one — flagged below rather than hidden.
   const growthQ = useQuery({
-    queryKey: ['growth', shop.id, end, growth],
-    queryFn: () => creatorGrowth(shop.id, end, { minGrowth: growth, maxGmv: null }),
+    queryKey: ['growth', allShops ? 'all' : shop.id, end, growth],
+    queryFn: () => (allShops
+      ? allCreatorGrowth(end, { minGrowth: growth, maxGmv: null })
+      : creatorGrowth(shop.id, end, { minGrowth: growth, maxGmv: null })),
   });
   const productsQ = useQuery({
     queryKey: ['catalog', shop.id],
@@ -157,10 +163,28 @@ export default function OutreachPage({ shop, end }) {
               onChange={(e) => { setOrganicOnly(e.target.checked); setPicked(null); }} />
             Fully organic only <span className="muted">(no ad spend behind their growth)</span>
           </label>
+          <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 7 }}>
+            <input type="checkbox" checked={allShops}
+              onChange={(e) => { setAllShops(e.target.checked); setPicked(null); }} />
+            All shops <span className="muted">(not just {shop.shop_name})</span>
+          </label>
           <div className="spacer" />
           <button className="btn" onClick={() => setPicked(null)}>Select all</button>
           <button className="btn" onClick={() => setPicked(new Set())}>Clear</button>
         </div>
+
+        {/* An automation belongs to one shop. Inviting someone who grew for a
+            different shop is legitimate, but it is a colder ask than inviting
+            someone already selling this brand — worth saying before they send. */}
+        {allShops && candidates.some((c) => c.shops && !c.shops.includes(shop.shop_name)) && (
+          <div style={{ marginBottom: 12 }}>
+            <Note tone="info">
+              This list spans every shop, but the automation you are building belongs to{' '}
+              <strong>{shop.shop_name}</strong>. Creators marked in amber grew for a different brand — they
+              can still be invited, it is simply a colder ask than inviting someone already selling this one.
+            </Note>
+          </div>
+        )}
 
         {growthQ.isLoading ? <Skeleton h={200} /> : !candidates.length ? (
           <p className="muted" style={{ fontSize: 13 }}>No creators match this filter in the last 30 days.</p>
@@ -170,6 +194,7 @@ export default function OutreachPage({ shop, end }) {
               <thead>
                 <tr>
                   <th style={{ width: 34 }}></th><th>Creator</th>
+                  {allShops && <th>Grew for</th>}
                   <th className="num">Last 30d</th><th className="num">Prior 30d</th>
                   <th className="num">Growth</th><th className="num">Ad-driven</th>
                 </tr>
@@ -187,6 +212,11 @@ export default function OutreachPage({ shop, end }) {
                         }} />
                       </td>
                       <td className="tight">@{c.creator_handle}</td>
+                      {allShops && (
+                        <td className="tight muted" style={
+                          c.shops && !c.shops.includes(shop.shop_name) ? { color: 'var(--warning)' } : undefined
+                        }>{c.shops}</td>
+                      )}
                       <td className="num tight"><strong>{money(c.recent_gmv, cur)}</strong></td>
                       <td className="num tight muted">{money(c.prior_gmv, cur)}</td>
                       <td className="num tight">{Number(c.growth_multiple).toFixed(1)}×</td>

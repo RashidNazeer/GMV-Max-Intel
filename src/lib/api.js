@@ -121,6 +121,24 @@ export const creatorGrowth = (shopId, end, opts = {}) =>
     p_limit: opts.limit ?? 500,
   });
 
+/**
+ * The same growth question across every shop the caller can see.
+ *
+ * GMV is summed per creator rather than listed per shop, so someone selling for
+ * two shops ranks by what they are really worth. Today no creator does, but
+ * that is a fact about the current data, not a property worth building on.
+ */
+export const allCreatorGrowth = (end, opts = {}) =>
+  rpc('all_creator_growth', {
+    p_end: end,
+    p_window_days: opts.windowDays ?? 30,
+    p_min_growth: opts.minGrowth ?? 2,
+    p_max_gmv: opts.maxGmv ?? null,
+    p_min_gmv: opts.minGmv ?? 0,
+    p_include_new: opts.includeNew ?? false,
+    p_limit: opts.limit ?? 500,
+  });
+
 export async function productCatalog(shopId) {
   const { data, error } = await supabase
     .from('product_catalog')

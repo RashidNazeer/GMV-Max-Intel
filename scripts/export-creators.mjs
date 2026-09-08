@@ -25,14 +25,25 @@ const minGmv = Number(process.argv[5] ?? 0);
 const END = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
 
 const { data: shops } = await db.from('shops').select('id, shop_name, currency');
-const shop = shops.find((s) => s.shop_name.toLowerCase().includes(which));
-if (!shop) { console.error(`no shop matching "${which}" — have: ${shops.map((s) => s.shop_name).join(', ')}`); process.exit(1); }
 
-const { data, error } = await db.rpc('shop_creator_growth', {
-  p_shop_id: shop.id, p_end: END, p_window_days: 30,
-  p_min_growth: minGrowth, p_max_gmv: maxGmv, p_min_gmv: minGmv,
-  p_include_new: false, p_limit: 500,
-});
+// "all" runs the cross-shop version, which sums a creator's GMV across every
+// shop they sell for rather than listing them once per shop.
+const ALL = which === 'all';
+const shop = ALL ? { shop_name: 'All shops', currency: 'USD' }
+  : shops.find((s) => s.shop_name.toLowerCase().includes(which));
+if (!shop) { console.error(`no shop matching "${which}" — have: all, ${shops.map((s) => s.shop_name).join(', ')}`); process.exit(1); }
+
+const { data, error } = ALL
+  ? await db.rpc('all_creator_growth', {
+      p_end: END, p_window_days: 30,
+      p_min_growth: minGrowth, p_max_gmv: maxGmv, p_min_gmv: minGmv,
+      p_include_new: false, p_limit: 500,
+    })
+  : await db.rpc('shop_creator_growth', {
+      p_shop_id: shop.id, p_end: END, p_window_days: 30,
+      p_min_growth: minGrowth, p_max_gmv: maxGmv, p_min_gmv: minGmv,
+      p_include_new: false, p_limit: 500,
+    });
 if (error) { console.error(error.message); process.exit(1); }
 
 const n = (v, d = 2) => (v == null ? '' : Number(v).toFixed(d));
@@ -42,12 +53,13 @@ const esc = (v) => {
 };
 
 const header = [
-  'creator_handle', 'gmv_last_30d', 'gmv_prior_30d', 'growth_multiple', 'growth_pct',
+  'creator_handle', ...(ALL ? ['shops'] : []), 'gmv_last_30d', 'gmv_prior_30d', 'growth_multiple', 'growth_pct',
   'ad_driven_gmv', 'organic_gmv', 'ad_driven_share', 'videos', 'order_lines', 'fully_organic',
 ];
 
 const rows = data.map((c) => [
   c.creator_handle,
+  ...(ALL ? [c.shops] : []),
   n(c.recent_gmv), n(c.prior_gmv), n(c.growth_multiple, 2),
   c.growth_pct == null ? '' : n(Number(c.growth_pct) * 100, 1),
   n(c.recent_paid_gmv), n(c.recent_organic_gmv),
