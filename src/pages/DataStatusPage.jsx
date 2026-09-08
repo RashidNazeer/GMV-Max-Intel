@@ -121,10 +121,15 @@ export default function DataStatusPage() {
         <Stat k="Affiliate capture" basis="measured" v={pct(a?.affiliate_capture, 1)}
           tone={a && (Number(a.affiliate_capture) > 1.02 || Number(a.affiliate_capture) < 0.85) ? 'danger' : undefined}
           sub={a && Number(a.affiliate_capture) > 1 ? 'we hold MORE than the source reports' : 'of Seller Center’s affiliate figure'} />
+        {/* "all days add up" is a CLAIM. While recon is still loading it was
+            printed anyway, so the page asserted a clean reconciliation it had
+            not checked yet — caught by a mid-load screenshot. */}
         <Stat k="Days reconciled" basis="measured"
           tone={recon?.days_exception ? 'danger' : undefined}
           v={recon ? `${recon.days_reconciled} / ${recon.days}` : '—'}
-          sub={recon?.days_exception ? `${recon.days_exception} days do not add up` : 'all days add up'}
+          sub={reconQ.isLoading || !recon ? 'checking…'
+            : recon.days_exception ? `${recon.days_exception} days do not add up`
+            : 'all days add up'}
           hint="Measured per day. A window can net to zero while most days are wrong in opposite directions, which is why this is not a window-level check." />
         <Stat k="Ad spend source"
           basis={roasQ.data ? (roasQ.data.is_simulated ? 'simulated' : 'measured') : undefined}

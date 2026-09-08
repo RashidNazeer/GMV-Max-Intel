@@ -427,3 +427,73 @@ table.plain tr:last-child td{border-bottom:0}
   .vdetail{grid-template-columns:1fr}
   .datepop{right:auto;left:0;width:min(340px,calc(100vw - 40px))}
 }
+
+/* ── fixes from the browser QA gate ────────────────────────────────────── */
+
+/* The summary as ONE compact strip. Five separate cards pushed the action
+   queue entirely out of the first screenful at 1366x768 — measured at 0 rows
+   visible, against a requirement of at least three. */
+.statstrip{
+  display:grid;grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:18px;align-items:start;padding:14px 18px;
+}
+.statstrip>.card{background:none;border:0;box-shadow:none;padding:0}
+.statstrip .v{font-size:19px;line-height:1.25;margin-top:2px}
+.statstrip .sub{font-size:11.5px;line-height:1.4;margin-top:2px}
+.statstrip .k{font-size:11px}
+
+/* The decision card, tightened so the queue clears the fold. */
+.decision{padding:16px 18px;gap:18px}
+.decision-title{font-size:18px;margin:8px 0 5px}
+.decision-reason{font-size:13px;margin:0 0 11px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.decision-do{padding:9px 12px;margin-bottom:10px;font-size:12.5px}
+.suggestion{padding:10px 14px;margin-bottom:11px}
+.suggestion-v{font-size:17px}
+
+
+/* Definition tables were not in a scroll container, so a long row pushed the
+   whole PAGE sideways on a phone — 123px of horizontal overflow on Data
+   status at 390px. Wide content scrolls inside itself; the body never does. */
+table.plain{display:block;overflow-x:auto;max-width:100%}
+table.plain tbody{display:table;width:100%}
+@media (max-width:560px){
+  table.plain td:first-child{min-width:120px}
+  .statstrip{grid-template-columns:1fr 1fr}
+}
+@media (max-width:1180px){
+  .statstrip{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:14px}
+}
+
+/* Two thin bars. Measured in a browser: one bar wrapped to two rows at 1366
+   (90px) and to three rows once forced nowrap (130px), which also pushed the
+   page sideways at 390px. Fixed heights beat a bar that reflows under you. */
+.topbar{flex-wrap:nowrap;height:48px;gap:10px;padding:0 16px}
+.topbar .brand{white-space:nowrap;flex:0 0 auto}
+.navbar{
+  display:flex;align-items:center;height:40px;padding:0 12px;
+  background:var(--surface-1);border-bottom:1px solid var(--border-subtle);
+  position:sticky;top:0;z-index:20;
+}
+.navbar .nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.navbar .nav::-webkit-scrollbar{display:none}
+.whoami{font-size:12.5px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:1180px){ .whoami{display:none} }
+@media (max-width:860px){
+  .topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .datectl{flex:1 1 100%}
+}
+
+/* ── the horizontal-overflow root cause ────────────────────────────────── */
+/* A grid or flex child defaults to min-width:auto, which means it grows to its
+   CONTENT's intrinsic width. So a card holding a wide table pushed itself —
+   and the whole page — past the viewport, and .scroll{overflow-x:auto} could
+   do nothing about it because the scroller itself had already been stretched.
+   Measured: 325px of page overflow on Attribution at 390px wide.
+   min-width:0 lets the card shrink so the table scrolls inside it instead. */
+.grid > *{min-width:0}
+.card{min-width:0}
+.scroll{overflow-x:auto;max-width:100%}
+.decision-main, .decision-side{min-width:0}
+.statstrip > *{min-width:0}
+.vcell, .phead{min-width:0}

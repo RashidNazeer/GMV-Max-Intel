@@ -156,14 +156,65 @@ console.log('\n── confidence is not the source badge and not an R-squared �
   check('and it carries its components', inc.confidence_parts.length > 0, true);
 }
 
-console.log('\n── simulated inputs stay simulated all the way through ──');
+console.log('\n── the basis belongs to the ACTION, not to the shop ──');
 {
   const f = { ...base, roas: { ...base.roas, is_simulated: true } };
   const d = decide(f);
-  check('the recommendation is marked simulated', d.primary.source_mode, 'simulated');
+
   const inc = d.all.find((r) => r.action_code === ACTION.INCREASE_BUDGET);
-  check('a simulated guardrail is recorded as failed',
+  check('a spend-dependent action on a simulated shop is simulated', inc?.source_mode, 'simulated');
+  check('and its simulated guardrail is recorded as failed',
     (inc?.guardrails || []).some((g) => !g.passed && /measured/.test(g.name)), true);
+
+  // THE BUG THIS LOCKS DOWN: every recommendation used to inherit the shop's
+  // simulated flag, so a listing review computed entirely from measured Seller
+  // Center funnel data rendered as "REVIEW LISTINGS · SIMULATED". A badge that
+  // is wrong in the harmless direction trains the reader to ignore it.
+  const withWeak = {
+    ...f,
+    weakProductIds: ['p1'],
+    productStats: { median_conversion: 0.03, median_n: 8, median_min_clicks: 500 },
+  };
+  const listing = decide(withWeak).all.find((r) => r.action_code === ACTION.REVIEW_LISTING);
+  check('a listing review from measured funnel data is NOT marked simulated',
+    listing?.source_mode, 'measured');
+
+  const creative = decide({
+    ...f,
+    creative: { ...base.creative, declining_videos: 40, declining_gmv: 40000, top5_share: 0.6 },
+  }).all.find((r) => r.action_code === ACTION.REVIEW_CREATIVE);
+  check('a creative review from order lines is NOT marked simulated',
+    creative?.source_mode, 'measured');
+
+  // On a shop with real spend the model is still MODELLED, never "measured".
+  const real = decide(base).all.find((r) => r.action_code === ACTION.INCREASE_BUDGET);
+  check('a model-derived action on a real shop is modelled', real?.source_mode, 'modelled');
+}
+
+console.log('\n── a data finding names what actually fired ──');
+{
+  // Cutler's components reconcile to the cent; what is low is coverage. The
+  // title used to claim a reconciliation failure regardless.
+  const lowCapture = {
+    ...base,
+    attribution: { ...base.attribution, affiliate_capture: 0.78, reconciliation_status: 'reconciled' },
+  };
+  const f1 = decide(lowCapture).all.find((r) => r.action_code === ACTION.FIX_DATA);
+  check('low coverage is not called a reconciliation failure',
+    /does not reconcile/.test(f1.title), false);
+  check('it names the missing evidence instead', /no order-line evidence/.test(f1.title), true);
+  check('and is not raised as a repair task', f1.severity, 'info');
+
+  const mismatch = {
+    ...base,
+    attribution: {
+      ...base.attribution, reconciliation_status: 'exception',
+      reconciliation_pct: 0.024, reconciliation_gap: 72.93, affiliate_capture: 1.039,
+    },
+  };
+  const f2 = decide(mismatch).all.find((r) => r.action_code === ACTION.FIX_DATA);
+  check('a genuine mismatch still says so', /does not reconcile/.test(f2.title), true);
+  check('and is critical', f2.severity, 'critical');
 }
 
 console.log('\n── determinism and robustness ──');

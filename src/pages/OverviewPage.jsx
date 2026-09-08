@@ -25,7 +25,7 @@ export default function OverviewPage() {
   const qc = useQueryClient();
   const cur = shop.currency || 'USD';
 
-  const { facts, decision, loading, error } = useFacts(shop, scope);
+  const { facts, decision, loading, coreLoading, error } = useFacts(shop, scope);
 
   const recsQ = useQuery({
     queryKey: ['recs', shop.id],
@@ -82,13 +82,16 @@ export default function OverviewPage() {
 
   return (
     <div className="grid" style={{ gap: 16 }}>
-      {loading
-        ? <div className="card pad"><Skeleton h={150} /></div>
+      {/* The decision renders as soon as ITS inputs are ready, not when every
+          supporting query has finished. It was still a skeleton at five
+          seconds while the chart below it had already drawn. */}
+      {coreLoading
+        ? <div className="card pad"><Skeleton h={140} /></div>
         : <DecisionHeader decision={decision} shop={shop} scope={scope} stored={stored} />}
 
-      <SummaryRow facts={facts} cur={cur} loading={loading} scope={scope} params={params} />
+      <SummaryRow facts={facts} cur={cur} loading={coreLoading} scope={scope} params={params} />
 
-      {!loading && <PriorityTable decision={decision} shop={shop} records={recsQ.data} />}
+      {!coreLoading && <PriorityTable decision={decision} shop={shop} records={recsQ.data} />}
 
       <ChannelChart rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} />
 
@@ -109,8 +112,13 @@ export default function OverviewPage() {
  * reason is that a strip of twelve numbers is read as none of them.
  */
 function SummaryRow({ facts, cur, loading, scope, params }) {
+  // Compact by construction: five short columns in ONE card rather than five
+  // full-height cards. At 1366x768 the taller version pushed the action queue
+  // out of the first screenful entirely — measured at 0 rows visible.
   if (loading) {
-    return <div className="grid g5">{[0, 1, 2, 3, 4].map((i) => <div key={i} className="card pad"><Skeleton h={54} /></div>)}</div>;
+    return <div className="card pad statstrip">{[0, 1, 2, 3, 4].map((i) => (
+      <div key={i}><Skeleton h={44} /></div>
+    ))}</div>;
   }
   const a = facts.attribution;
   const r = facts.roas;
@@ -121,7 +129,7 @@ function SummaryRow({ facts, cur, loading, scope, params }) {
     ? mg.mean_daily_spend / facts.dailyBudget : null;
 
   return (
-    <div className="grid g5">
+    <div className="card pad statstrip">
       <Stat k="Shop GMV" basis="measured" v={money(a?.total_gmv, cur)}
         sub={`${Number(a?.orders || 0).toLocaleString()} orders · ${a?.days_covered || 0} days`}
         hint={`Total TikTok Shop GMV from Seller Center for ${scope.start} to ${scope.end}, in the shop's reporting timezone.`} />

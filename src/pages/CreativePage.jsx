@@ -67,6 +67,23 @@ export default function CreativePage() {
     else lp.set({ sort: field, dir: 'desc' });
   };
 
+  // ── NEVER ASSERT WHILE LOADING ────────────────────────────────────────────
+  // Browser QA screenshotted this page mid-load showing "Videos earning 0",
+  // "undefined videos down >30% week-on-week" and "undefined up >30% ·
+  // undefined new". A zero is a measurement and a literal "undefined" is a bug
+  // on screen; neither is an acceptable way to say "still loading". The whole
+  // strip is a skeleton until the numbers exist.
+  if (healthQ.isLoading || !h) {
+    return (
+      <div className="grid" style={{ gap: 16 }}>
+        <div className="grid g4">
+          {[0, 1, 2, 3].map((i) => <div key={i} className="card pad"><Skeleton h={64} /></div>)}
+        </div>
+        <div className="card pad"><Skeleton h={320} /></div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid" style={{ gap: 16 }}>
       <div className="grid g4">

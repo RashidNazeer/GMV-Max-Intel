@@ -59,18 +59,14 @@ export default function Shell({ session, profile }) {
 
   return (
     <>
+      {/* TWO THIN BARS, not one that wraps.
+          Everything on one row does not fit at 1366 — brand, seven tabs, shop,
+          dates, status, user and sign-out come to roughly 1450px — so the bar
+          wrapped to two rows, and forcing nowrap made it wrap to three and
+          pushed the page sideways on a phone. Both measured in the browser.
+          A predictable 48px + 40px beats an unpredictable 90-130px. */}
       <div className="topbar">
-        <div className="brand">GMV Intelligence <span>what your ads actually drove</span></div>
-
-        <nav className="nav" style={{ marginLeft: 18 }}>
-          {tabs.map((t) => (
-            <NavLink key={t.to} to={scopedTo(t.to, params)}
-              className={({ isActive }) => (isActive ? 'active' : undefined)}>
-              {t.label}
-            </NavLink>
-          ))}
-        </nav>
-
+        <div className="brand">GMV Intelligence</div>
         <div className="spacer" />
 
         <ShopSelect shops={shops} active={active} onPick={scope.setShop} loading={summaryQ.isLoading} />
@@ -79,10 +75,19 @@ export default function Shell({ session, profile }) {
 
         <DataStatusPill shop={shop} scope={scope} onOpen={() => navigate(scopedTo('/data', params))} />
 
-        <span className="muted" style={{ fontSize: 12.5 }}>
-          {profile?.display_name || session.user.email}
-        </span>
+        <span className="muted whoami">{profile?.display_name || session.user.email}</span>
         <button className="btn" onClick={() => supabase.auth.signOut()}>Sign out</button>
+      </div>
+
+      <div className="navbar">
+        <nav className="nav">
+          {tabs.map((t) => (
+            <NavLink key={t.to} to={scopedTo(t.to, params)}
+              className={({ isActive }) => (isActive ? 'active' : undefined)}>
+              {t.label}
+            </NavLink>
+          ))}
+        </nav>
       </div>
 
       <div className="wrap">

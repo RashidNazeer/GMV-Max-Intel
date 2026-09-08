@@ -233,12 +233,30 @@ const cFixData = (x) => {
   }
   if (!problems.length) return null;
 
+  // THE TITLE MUST NAME WHAT ACTUALLY FIRED.
+  //
+  // It was hardcoded to "Revenue does not reconcile against its own source" for
+  // all three causes. On Cutler that is simply false — its components reconcile
+  // to the cent; what is low is COVERAGE, because a quarter of affiliate
+  // revenue sits in Partner-tab campaigns Reacher does not ingest yet. Seen on
+  // screen in browser QA, sitting above a reconciliation status of "reconciled".
+  const mismatched = x.reconciliationStatus === 'exception' || (x.capture != null && x.capture > 1.02);
+  const title = mismatched
+    ? 'Revenue does not reconcile against its own source'
+    : `${pct(1 - x.capture)} of affiliate revenue has no order-line evidence`;
+
   return {
     action: ACTION.FIX_DATA,
-    severity: x.reconciliationStatus === 'exception' ? 'critical' : 'warning',
-    title: 'Revenue does not reconcile against its own source',
-    reason: `${problems.join('; ')}. Every share on this page has one of these as a denominator, so this outranks any conclusion drawn from them.`,
-    actionText: 'Open Data status for the day-by-day breakdown, then raise the discrepancy with Reacher before moving budget on these figures.',
+    // A gap Reacher has already explained and is fixing is context, not a
+    // repair task sitting at the top of someone's queue.
+    severity: x.reconciliationStatus === 'exception' ? 'critical' : mismatched ? 'warning' : 'info',
+    title,
+    reason: mismatched
+      ? `${problems.join('; ')}. Every share on this page has one of these as a denominator, so this outranks any conclusion drawn from them.`
+      : `${problems.join('; ')}. The components still add up, so the figures are internally consistent — they simply describe the part of affiliate revenue we can see.`,
+    actionText: mismatched
+      ? 'Open Data status for the day-by-day breakdown, then raise the discrepancy with Reacher before moving budget on these figures.'
+      : 'Nothing to repair here. Read every affiliate share on this page as a share of the Creator tab until Reacher ships Partner-tab ingestion.',
     evidence: problems,
     checks: run(x, ['reconciled', 'capture']),
     revenueAffected: x.totalGmv,
@@ -298,6 +316,7 @@ const cIncreaseBudget = (x) => {
 
   return {
     action: ACTION.INCREASE_BUDGET,
+    usesSpend: true,
     severity: 'info',
     title: 'Room to raise budget',
     reason: `The next dollar is modelled to return ${x.marginal.toFixed(2)} in ${x.marginalTargetLabel || 'shop GMV'}${x.marginalCi ? ` (${x.marginalCi[0].toFixed(2)}–${x.marginalCi[1].toFixed(2)})` : ''}, against an average of ${x.avgRoas?.toFixed(2)}. That is above the floor this objective implies, so extra delivery is still worth buying.`,
@@ -333,6 +352,7 @@ const cDecreaseBudget = (x) => {
   const current = x.dailyBudget;
   return {
     action: ACTION.DECREASE_BUDGET,
+    usesSpend: true,
     severity: 'warning',
     title: 'The next dollar is losing money',
     reason: `The marginal return is ${x.marginal.toFixed(2)} in ${x.marginalTargetLabel || 'shop GMV'} — below one. The campaign can still average ${x.avgRoas?.toFixed(2)} while the money being added to it does not pay for itself.`,
@@ -370,6 +390,7 @@ const cTargetRoi = (x) => {
   const band = sizeBand(BANDS.target_roi, x);
   return {
     action: ACTION.DECREASE_TARGET_ROI,
+    usesSpend: true,
     severity: 'info',
     title: 'Target ROI is throttling delivery',
     reason: `Spend is only ${pct(x.utilisation)} of the daily budget while the marginal return is still ${x.marginal.toFixed(2)}. The budget is not the limit — the bid is.`,
@@ -434,6 +455,7 @@ const cInsufficient = (x) => {
   if (!x.hasSpend && !x.totalGmv) return null;
   return {
     action: ACTION.INSUFFICIENT_DATA,
+    usesSpend: true,
     severity: 'info',
     title: 'Not enough evidence to size a spend change',
     reason: x.marginalReason || 'The spend-response model has not reached an actionable estimate for this shop.',
@@ -615,7 +637,19 @@ function shape(c, x, role, suppressedList) {
     model_confidence: x.modelConfidence,
     data_coverage: x.coverage,
     missing_inputs: c.missingInputs || [],
-    source_mode: x.simulated ? 'simulated' : (c.action === ACTION.INCREASE_BUDGET || c.action === ACTION.DECREASE_BUDGET ? 'modelled' : 'measured'),
+    // THE BASIS IS THE ACTION'S OWN, not the shop's.
+    //
+    // This read `x.simulated ? 'simulated' : …`, so on a shop with simulated ad
+    // spend EVERY recommendation was stamped "simulated" — including a listing
+    // review computed entirely from measured Seller Center funnel data. Seen on
+    // screen in browser QA: "REVIEW LISTINGS · SIMULATED · HIGH CONFIDENCE".
+    //
+    // A badge that is wrong in the safe direction still teaches the reader to
+    // ignore it, and then it is worthless in the direction that matters. The
+    // basis is now the weakest input THIS action actually used.
+    source_mode: c.usesSpend
+      ? (x.simulated ? 'simulated' : 'modelled')
+      : 'measured',
     rule_version: RULE_VERSION,
   };
 }

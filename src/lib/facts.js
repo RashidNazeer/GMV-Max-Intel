@@ -64,7 +64,19 @@ export function useFacts(shop, scope) {
     enabled: on,
   });
 
-  const loading = attrQ.isLoading || creativeQ.isLoading || statsQ.isLoading;
+  // ── WHY THERE ARE TWO LOADING FLAGS ───────────────────────────────────────
+  // Browser QA caught the decision card still rendering a skeleton five seconds
+  // in, while the chart underneath it had already drawn. The most important
+  // thing on the page was the slowest, because the decision waited on every
+  // query in this hook — including a 200-row product fetch, a 100-row video
+  // fetch and two 500-row id sweeps that the primary action does not need.
+  //
+  // coreLoading covers only what decide() actually reasons from. The id sets
+  // and supporting rows arrive after and re-render in place, so a drill-down
+  // count appears a moment later rather than holding the whole decision back.
+  const coreLoading = attrQ.isLoading || creativeQ.isLoading || statsQ.isLoading
+    || roasQ.isLoading || modelQ.isLoading;
+  const loading = coreLoading || productsQ.isLoading || decliningQ.isLoading;
   const error = attrQ.error || creativeQ.error || statsQ.error;
 
   const campaigns = campaignsQ.data || [];
@@ -141,7 +153,7 @@ export function useFacts(shop, scope) {
     spendRows,
   };
 
-  const decision = loading ? null : decide(facts);
+  const decision = coreLoading ? null : decide(facts);
 
-  return { facts, decision, loading, error, queries: { attrQ, creativeQ, statsQ, roasQ, productsQ, modelQ } };
+  return { facts, decision, loading, coreLoading, error, queries: { attrQ, creativeQ, statsQ, roasQ, productsQ, modelQ } };
 }
