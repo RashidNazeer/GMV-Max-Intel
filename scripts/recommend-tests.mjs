@@ -29,7 +29,7 @@ const base = {
   },
   creative: {
     video_count: 100, gmv: 80000, top1_share: 0.05, top5_share: 0.18, top10_share: 0.3,
-    fatigued_videos: 2, fatigued_gmv: 1000, rising_videos: 5, rising_gmv: 4000,
+    declining_videos: 2, declining_gmv: 1000, rising_videos: 5, rising_gmv: 4000,
     trend_measurable: true,
   },
   videos: [], products: [], roas: null,
@@ -56,18 +56,18 @@ console.log('\n── concentration ──');
   check('no revenue -> SILENT', has(noGmv, 'creative-concentration'), false);
 }
 
-console.log('\n── fatigue ──');
+console.log('\n── declining GMV ──');
 {
-  const f = { ...base, creative: { ...base.creative, fatigued_videos: 9, fatigued_gmv: 32000 } };
-  check('40% of revenue fading -> warning', get(f, 'creative-fatigue').severity, SEVERITY.WARNING);
+  const f = { ...base, creative: { ...base.creative, declining_videos: 9, declining_gmv: 32000 } };
+  check('40% of revenue declining -> warning', get(f, 'creative-declining').severity, SEVERITY.WARNING);
 
   // A 7-day window has no comparable prior week; the SQL returns
   // trend_measurable=false and the rule must not invent a trend.
-  const short = { ...base, days: 7, creative: { ...base.creative, trend_measurable: false, fatigued_videos: 9, fatigued_gmv: 32000 } };
-  check('window too short to measure a trend -> SILENT', has(short, 'creative-fatigue'), false);
+  const short = { ...base, days: 7, creative: { ...base.creative, trend_measurable: false, declining_videos: 9, declining_gmv: 32000 } };
+  check('window too short to measure a trend -> SILENT', has(short, 'creative-declining'), false);
 
-  const low = { ...base, creative: { ...base.creative, fatigued_videos: 1, fatigued_gmv: 500 } };
-  check('below threshold -> SILENT', has(low, 'creative-fatigue'), false);
+  const low = { ...base, creative: { ...base.creative, declining_videos: 1, declining_gmv: 500 } };
+  check('below threshold -> SILENT', has(low, 'creative-declining'), false);
 }
 
 console.log('\n── affiliate capture (data integrity) ──');
@@ -81,7 +81,13 @@ console.log('\n── affiliate capture (data integrity) ──');
   check('capture under 85% -> critical', r.severity, SEVERITY.CRITICAL);
   check('does NOT blame the integration flag — it proved unreliable',
     /DISCONNECTED/.test(r.finding), false);
-  check('says the gap is inside Reacher', /inside Reacher/.test(r.action), true);
+  // Reacher answered this on 2026-09-08: their transactions feed covers the
+  // Creator tab and matches TikTok's export exactly; the remainder is
+  // agency-run Partner-tab campaigns they do not ingest yet. The rule now names
+  // that cause instead of asking a question that has been answered.
+  check('names the Partner tab as the cause', /Partner/.test(r.finding), true);
+  check('does not tell the user to chase a resolved question',
+    /Ask them which affiliate orders/.test(r.action), false);
   check('rules out settling lag in the evidence',
     r.evidence.some((e) => /settling lag/.test(e)), true);
   check('capture outranks everything else', ids(f)[0], 'affiliate-capture');
@@ -166,16 +172,17 @@ console.log('\n── conversion drag ──');
   const p = (id, ctor, clicks, imp = 200000) => ({
     product_id: id, title: id, click_to_order_rate: ctor, clicks, impressions: imp, aov: 30, gmv: 5000, refund_rate: 0.01,
   });
-  const f = { ...base, products: [p('good1', 0.03, 20000), p('good2', 0.028, 18000), p('good3', 0.032, 15000), p('bad', 0.008, 12000)] };
+  const stats = (median, medianN = 4) => ({ median_conversion: median, median_n: medianN, median_min_clicks: 500 });
+  const f = { ...base, productStats: stats(0.03), products: [p('good1', 0.03, 20000), p('good2', 0.028, 18000), p('good3', 0.032, 15000), p('bad', 0.008, 12000)] };
   const r = get(f, 'conversion-drag');
   check('a product well under the median -> warning', r.severity, SEVERITY.WARNING);
   check('names the worst offender', /bad/.test(r.finding), true);
 
-  const lowTraffic = { ...base, products: [p('good1', 0.03, 20000), p('good2', 0.028, 18000), p('good3', 0.032, 15000), p('bad', 0.008, 900)] };
+  const lowTraffic = { ...base, productStats: stats(0.03), products: [p('good1', 0.03, 20000), p('good2', 0.028, 18000), p('good3', 0.032, 15000), p('bad', 0.008, 400)] };
   check('poor rate on thin clicks -> SILENT', has(lowTraffic, 'conversion-drag'), false);
 
   check('too few products to have a median -> SILENT',
-    has({ ...base, products: [p('a', 0.001, 90000)] }, 'conversion-drag'), false);
+    has({ ...base, productStats: stats(null, 0), products: [p('a', 0.001, 90000)] }, 'conversion-drag'), false);
 }
 
 console.log('\n── refunds ──');
@@ -193,11 +200,11 @@ console.log('\n── ordering and robustness ──');
   const f = {
     ...base,
     attribution: { ...base.attribution, affiliate_capture: 0.7, affiliate_unmeasured_gmv: 24000 },
-    creative: { ...base.creative, top1_share: 0.2, top5_share: 0.6, fatigued_videos: 9, fatigued_gmv: 30000 },
+    creative: { ...base.creative, top1_share: 0.2, top5_share: 0.6, declining_videos: 9, declining_gmv: 30000 },
   };
   const order = ids(f);
   check('critical findings come before warnings',
-    order.indexOf('affiliate-capture') < order.indexOf('creative-fatigue'), true);
+    order.indexOf('affiliate-capture') < order.indexOf('creative-declining'), true);
   check('the all-clear disappears once anything real fires', order.includes('all-clear'), false);
 }
 {
@@ -257,14 +264,15 @@ console.log('\n── what is working (strengths) ──');
   const p = (id, ctor, gmv = 5000) => ({
     product_id: id, title: id, click_to_order_rate: ctor, clicks: 20000, impressions: 200000, gmv, refunds: 50, refund_rate: 0.01,
   });
-  const conv = { ...base, products: [p('lo', 0.01), p('mid', 0.02), p('hi', 0.05, 9000)] };
+  const pstats = (median, medianN = 3) => ({ median_conversion: median, median_n: medianN, median_min_clicks: 500 });
+  const conv = { ...base, productStats: pstats(0.02), products: [p('lo', 0.01), p('mid', 0.02), p('hi', 0.05, 9000)] };
   const sc = wGet(conv, 'strong-converters');
   check('a product well above median -> fires', !!sc, true);
   check('names the best converter', /hi/.test(sc.finding), true);
 
-  const flat = { ...base, products: [p('a', 0.02), p('b', 0.021), p('c', 0.019)] };
+  const flat = { ...base, productStats: pstats(0.02), products: [p('a', 0.02), p('b', 0.021), p('c', 0.019)] };
   check('no standout converter -> SILENT', wHas(flat, 'strong-converters'), false);
-  check('too few products -> SILENT', wHas({ ...base, products: [p('a', 0.05)] }, 'strong-converters'), false);
+  check('too few products -> SILENT', wHas({ ...base, productStats: pstats(null, 0), products: [p('a', 0.05)] }, 'strong-converters'), false);
 
   // Robustness, same contract as the problem rules.
   check('no facts -> no strengths, no crash', whatsWorking({}).length, 0);

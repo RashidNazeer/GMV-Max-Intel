@@ -61,18 +61,65 @@ async function rpc(fn, args) {
 export const shopAttribution  = (id, s, e) => rpc('shop_attribution', { p_shop_id: id, p_start: s, p_end: e }).then(one);
 export const shopChannelDaily = (id, s, e) => rpc('shop_channel_daily', { p_shop_id: id, p_start: s, p_end: e });
 
-export const shopCreativeHealth = (id, s, e) => rpc('shop_creative_health', { p_shop_id: id, p_start: s, p_end: e }).then(one);
-export const shopTopVideos = (id, s, e, limit = 25) =>
-  rpc('shop_top_videos', { p_shop_id: id, p_start: s, p_end: e, p_limit: limit });
+/** Day-level reconciliation. A window that nets to zero can still be wrong every day. */
+export const shopReconciliation = (id, s, e) =>
+  rpc('shop_reconciliation', { p_shop_id: id, p_start: s, p_end: e }).then(one);
 
-export const shopProducts = (id, s, e, limit = 50) =>
-  rpc('shop_products', { p_shop_id: id, p_start: s, p_end: e, p_limit: limit });
+export const shopCreativeHealth = (id, s, e) => rpc('shop_creative_health', { p_shop_id: id, p_start: s, p_end: e }).then(one);
+
+/**
+ * Videos, with search / filter / sort / paging done in SQL.
+ *
+ * The old client fetched a hardcoded top 50 while the page headline said 573
+ * videos earned and 61 were fading, and the server capped at 200 — so most of
+ * the population was unreachable at any setting. `total` comes back on every
+ * row so the table can say "1-50 of 573" truthfully rather than implying the
+ * 50 it holds are everything.
+ */
+export async function shopTopVideos(id, s, e, opts = {}) {
+  const rows = await rpc('shop_top_videos', {
+    p_shop_id: id, p_start: s, p_end: e,
+    p_limit: opts.limit ?? 50,
+    p_offset: opts.offset ?? 0,
+    p_search: opts.search || null,
+    p_status: opts.status || null,
+    p_sort: opts.sort || 'gmv',
+    p_dir: opts.dir || 'desc',
+    p_ids: opts.ids?.length ? opts.ids : null,
+  });
+  return { rows: rows || [], total: Number(rows?.[0]?.total_count ?? 0) };
+}
+
+export async function shopProducts(id, s, e, opts = {}) {
+  const rows = await rpc('shop_products', {
+    p_shop_id: id, p_start: s, p_end: e,
+    p_limit: opts.limit ?? 50,
+    p_offset: opts.offset ?? 0,
+    p_search: opts.search || null,
+    p_sort: opts.sort || 'gmv',
+    p_dir: opts.dir || 'desc',
+    p_ids: opts.ids?.length ? opts.ids : null,
+  });
+  return { rows: rows || [], total: Number(rows?.[0]?.total_count ?? 0) };
+}
+
+/**
+ * THE canonical product counters and conversion benchmark.
+ *
+ * There used to be two medians under one label — the page computed one over
+ * every row with a rate, the rules computed another over rows with 50,000+
+ * impressions, and they printed 3.70% and 3.65% without either mentioning the
+ * other. Everything now reads this.
+ */
+export const shopProductStats = (id, s, e) =>
+  rpc('shop_product_stats', { p_shop_id: id, p_start: s, p_end: e }).then(one);
 
 // shop_paid_roas returns NO ROW when a shop has no campaigns, rather than a row
 // of zeros. `null` here therefore means "no spend data at all", which is a
 // different claim from "spend was zero" and must stay distinguishable on screen.
 export const shopPaidRoas    = (id, s, e) => rpc('shop_paid_roas', { p_shop_id: id, p_start: s, p_end: e }).then(one);
 export const shopSpendDaily  = (id, s, e) => rpc('shop_spend_daily', { p_shop_id: id, p_start: s, p_end: e });
+export const shopGmvDaily    = (id, s, e) => rpc('shop_gmv_daily', { p_shop_id: id, p_start: s, p_end: e });
 export const shopDataSources = (id) => rpc('shop_data_sources', { p_shop_id: id }).then(one);
 
 export async function listCampaigns(shopId) {
@@ -96,6 +143,15 @@ export async function listSettingsChanges(shopId, limit = 50) {
   return data || [];
 }
 
+/**
+ * Changes DETECTED by comparing consecutive settings snapshots.
+ *
+ * Deliberately distinct from a buyer reporting that they changed something.
+ * Both are evidence; merging them would let an intention pass as a fact.
+ */
+export const detectedSettingChanges = (shopId, since = null) =>
+  rpc('campaign_setting_changes', { p_shop_id: shopId, p_since: since });
+
 export async function syncRuns(shopId, limit = 8) {
   const { data, error } = await supabase
     .from('sync_runs')
@@ -105,6 +161,140 @@ export async function syncRuns(shopId, limit = 8) {
     .limit(limit);
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+// ── the decision workflow ───────────────────────────────────────────────────
+
+export async function listRecommendations(shopId, { status = null, limit = 50 } = {}) {
+  let q = supabase
+    .from('recommendations')
+    .select('*')
+    .eq('shop_id', shopId)
+    .order('generated_at', { ascending: false })
+    .limit(limit);
+  if (status) q = q.in('status', Array.isArray(status) ? status : [status]);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+/**
+ * Move a recommendation through its lifecycle.
+ *
+ * "Mark applied" records that a HUMAN made a change in TikTok. It does not make
+ * one, and nothing in this codebase can. The audit row is written first, so an
+ * action is never recorded as having happened without a trace of who claimed it.
+ */
+export async function setRecommendationStatus(rec, status, { actualValue = null, reason = null } = {}) {
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const { error: evErr } = await supabase.from('recommendation_events').insert({
+    recommendation_id: rec.id,
+    shop_id: rec.shop_id,
+    event: `status:${status}`,
+    from_status: rec.status,
+    to_status: status,
+    actor: user?.id ?? null,
+    actor_email: user?.email ?? null,
+    detail: { actual_value: actualValue, reason },
+  });
+  if (evErr) throw new Error(evErr.message);
+
+  const patch = { status, status_actor: user?.id ?? null, status_reason: reason };
+  if (status === 'applied') {
+    patch.applied_value = actualValue;
+    patch.applied_at = new Date().toISOString();
+  }
+
+  const { data, error } = await supabase
+    .from('recommendations')
+    .update(patch)
+    .eq('id', rec.id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function recommendationEvents(recId) {
+  const { data, error } = await supabase
+    .from('recommendation_events')
+    .select('event, from_status, to_status, actor_email, detail, created_at')
+    .eq('recommendation_id', recId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export const recommendationOutcome = (recId) =>
+  rpc('recommendation_outcome', { p_recommendation_id: recId });
+
+/**
+ * Persist the arbitration result so the lifecycle survives a refresh.
+ *
+ * Idempotent by (shop, fingerprint): reaching the same conclusion twice updates
+ * the row instead of creating a second identical task. A recommendation the
+ * buyer has already planned or applied is NOT overwritten — their decision
+ * outranks a regenerated suggestion.
+ */
+export async function persistRecommendation(shopId, decision, ctx) {
+  if (!decision) return null;
+  const existing = await supabase
+    .from('recommendations')
+    .select('id, status')
+    .eq('shop_id', shopId)
+    .eq('fingerprint', decision.fingerprint)
+    .in('status', ['proposed', 'planned', 'applied'])
+    .maybeSingle();
+
+  if (existing.data && existing.data.status !== 'proposed') return existing.data;
+
+  const row = {
+    shop_id: shopId,
+    scope_type: ctx.scopeType || 'shop',
+    scope_id: ctx.scopeId || null,
+    scope_label: ctx.scopeLabel || null,
+    affected_ids: decision.affected_ids || [],
+    fingerprint: decision.fingerprint,
+    window_start: ctx.start,
+    window_end: ctx.end,
+    model_start: ctx.modelStart || null,
+    model_end: ctx.modelEnd || null,
+    data_as_of: ctx.dataAsOf || null,
+    objective: ctx.objective || 'balanced',
+    source_mode: decision.source_mode,
+    rule_version: decision.rule_version,
+    action_code: decision.action_code,
+    role: decision.role,
+    severity: decision.severity,
+    current_value: decision.current_value,
+    suggested_value: decision.suggested_value,
+    change_abs: decision.change_abs,
+    change_pct: decision.change_pct,
+    value_unit: decision.value_unit,
+    test_days: decision.test_days,
+    title: decision.title,
+    reason: decision.reason,
+    action_text: decision.action_text,
+    evidence: decision.evidence,
+    guardrails: decision.guardrails,
+    suppressed: decision.suppressed,
+    revenue_affected: decision.revenue_affected,
+    confidence: decision.confidence,
+    confidence_label: decision.confidence_label,
+    confidence_parts: decision.confidence_parts,
+    missing_inputs: decision.missing_inputs,
+    model_confidence: decision.model_confidence,
+    data_coverage: decision.data_coverage,
+  };
+
+  const { data, error } = await supabase
+    .from('recommendations')
+    .upsert(row, { onConflict: 'shop_id,fingerprint' })
+    .select()
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 // ── outreach ────────────────────────────────────────────────────────────────
@@ -199,28 +389,9 @@ export const moneyExact = (n, currency = 'USD') =>
 export const pct = (x, digits = 1) =>
   x == null ? '—' : `${(Number(x) * 100).toFixed(digits)}%`;
 
-export const isoDaysAgo = (days) => {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
-};
-export const isoToday = () => new Date().toISOString().slice(0, 10);
+/** Numbers that might be absent. Number(null) is 0, and 0 is a measurement. */
+export const numOrNull = (v) => (v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+export const fixed = (v, d = 2) => (numOrNull(v) == null ? '—' : Number(v).toFixed(d));
 
-// ── how long affiliate data takes to settle ─────────────────────────────────
-// Measured 2026-09-07 by reconciling the same window at different ages against
-// Seller Center. Orders keep arriving for about two days:
-//
-//   window ending          Cutler   Biostime
-//   today                   75.9%     95.9%
-//   2 days back             78.5%     98.6%
-//   5 days back             78.5%     96.9%
-//
-// Capture stops improving after two days, so that is the settling period — not
-// a guess, and not the same thing as Cutler's separate structural shortfall,
-// which persists on months that closed long ago.
-//
-// Every window therefore ENDS two days back by default. Showing today's
-// half-arrived revenue next to a fully-arrived channel total would make the
-// most recent day look like a collapse, every single day.
-export const SETTLING_DAYS = 2;
-export const isoSettledEnd = () => isoDaysAgo(SETTLING_DAYS);
+// The date utility lives in window.js — one implementation, used everywhere.
+export { SETTLING_DAYS, reportWindow, modelWindow, chunkWindow, addDays, daysBetween, isoDaysAgo, isoSettledEnd } from './window.js';

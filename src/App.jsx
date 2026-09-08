@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './lib/supabase.js';
 import LoginPage from './pages/LoginPage.jsx';
 import Shell from './pages/Shell.jsx';
+import OverviewPage from './pages/OverviewPage.jsx';
+import CampaignsPage from './pages/CampaignsPage.jsx';
+import CampaignDetailPage from './pages/CampaignDetailPage.jsx';
+import CreativePage from './pages/CreativePage.jsx';
+import ProductsPage from './pages/ProductsPage.jsx';
+import AttributionPage from './pages/AttributionPage.jsx';
+import DataStatusPage from './pages/DataStatusPage.jsx';
+import OutreachPage from './pages/OutreachPage.jsx';
 
 export default function App() {
   const [session, setSession] = useState(undefined);   // undefined = still checking
@@ -40,5 +49,25 @@ export default function App() {
     );
   }
 
-  return <Shell session={session} profile={profile} />;
+  // Real routes, not tab state. A campaign someone links to has to open on that
+  // campaign, Back has to go back, and a filtered list has to survive a return
+  // from detail — none of which useState can do.
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Shell session={session} profile={profile} />}>
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="overview" element={<OverviewPage />} />
+          <Route path="campaigns" element={<CampaignsPage />} />
+          <Route path="campaigns/:campaignId" element={<CampaignDetailPage />} />
+          <Route path="creatives" element={<CreativePage />} />
+          <Route path="products" element={<ProductsPage />} />
+          <Route path="attribution" element={<AttributionPage />} />
+          <Route path="data" element={<DataStatusPage />} />
+          {profile?.role === 'boss' && <Route path="outreach" element={<OutreachPage />} />}
+          <Route path="*" element={<Navigate to="/overview" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
 }

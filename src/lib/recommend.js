@@ -78,30 +78,43 @@ const concentration = (f) => {
 };
 concentration.ruleId = 'creative-concentration';
 
-// 2. Are the earners fading?
-const fatigue = (f) => {
+// 2. Is revenue sitting on creative that is falling?
+//
+// NAMING, deliberately: a week-on-week revenue drop is DECLINING GMV and
+// nothing stronger. "Fatigue" claims an audience has been worn out, which needs
+// prior winning performance AND continuing exposure AND sustained decline. We
+// have no per-video spend and no in-window impressions, so exposure cannot be
+// tested — the stricter label is reserved for videos that were genuinely
+// earning before they fell (shop_top_videos classifies those separately), and
+// this rule speaks about the broader, weaker, honest claim.
+const declining = (f) => {
   const c = f.creative; if (!c || c.trend_measurable === false) return null;
-  const gmv = n(c.gmv), fat = n(c.fatigued_gmv), count = n(c.fatigued_videos);
-  if (!gmv || !fat || !count) return null;
-  const share = fat / gmv;
+  const gmv = n(c.gmv), fell = n(c.declining_gmv), count = n(c.declining_videos);
+  if (!gmv || !fell || !count) return null;
+  const share = fell / gmv;
   if (share < 0.2) return null;
 
   const cur = f.shop?.currency || 'USD';
+  const coverage = n(c.baseline_coverage);
   return {
     severity: share >= 0.35 ? SEVERITY.WARNING : SEVERITY.INFO,
     basis: BASIS.MEASURED,
-    at_stake: fat,
-    title: `${count} videos carrying ${pct(share)} of revenue are fading`,
-    finding: `${money(fat, cur)} of revenue sits on videos whose last 7 days are down 30% or more against the 7 before. Spending harder against fading creative raises cost per order rather than volume.`,
-    action: `Refresh these before increasing budget. ${n(c.rising_videos) ? `${n(c.rising_videos)} videos are rising — look at what those are doing differently.` : ''}`.trim(),
+    at_stake: fell,
+    action_ids: f.decliningIds || [],
+    drill_to: 'creatives',
+    drill_status: 'declining',
+    title: `${count} videos carrying ${pct(share)} of revenue are declining`,
+    finding: `${money(fell, cur)} of revenue sits on videos whose last 7 days are down 30% or more against the 7 before. Spending harder against declining creative raises cost per order rather than volume.`,
+    action: `Refresh these before increasing budget. ${n(c.fatigue_videos) ? `${n(c.fatigue_videos)} of them were earning well before they fell, which is the group worth briefing against first. ` : ''}${n(c.rising_videos) ? `${n(c.rising_videos)} videos are rising — look at what those are doing differently.` : ''}`.trim(),
     evidence: [
       `${count} videos down >30% week-on-week`,
-      `${money(fat, cur)} of ${money(gmv, cur)} affiliate revenue`,
+      `${money(fell, cur)} of ${money(gmv, cur)} affiliate revenue`,
+      coverage != null ? `a prior week existed for ${pct(coverage)} of videos — the rest have no baseline, which is not a decline` : 'baseline coverage unknown',
       n(c.rising_videos) ? `${n(c.rising_videos)} rising, ${money(n(c.rising_gmv), cur)}` : 'no videos rising >30%',
     ],
   };
 };
-fatigue.ruleId = 'creative-fatigue';
+declining.ruleId = 'creative-declining';
 
 // 3. Do our order lines account for the affiliate revenue Seller Center reports?
 // This is a data-integrity alarm, and it outranks any conclusion drawn from the
@@ -110,7 +123,35 @@ fatigue.ruleId = 'creative-fatigue';
 const capture = (f) => {
   const a = f.attribution; if (!a) return null;
   const cap = n(a.affiliate_capture), missing = n(a.affiliate_unmeasured_gmv);
-  if (cap == null || cap >= 0.95) return null;
+  if (cap == null) return null;
+
+  // THE ALARM IS TWO-SIDED. It used to fire only below 0.95, so Biostime's
+  // 103.9% — our order lines exceeding Seller Center's own affiliate figure —
+  // sailed through as perfect health while the six components summed to 102.4%
+  // of total shop GMV. Too much evidence is as much a reconciliation failure as
+  // too little; it just cannot be explained by missing data.
+  if (cap > 1.02) {
+    const cur = f.shop?.currency || 'USD';
+    const over = n(a.affiliate_overflow_gmv);
+    return {
+      severity: SEVERITY.CRITICAL,
+      basis: BASIS.MEASURED,
+      at_stake: over ?? 0,
+      title: `Our order lines exceed Seller Center's own affiliate figure by ${pct(cap - 1, 1)}`,
+      finding: `We hold ${money(n(a.affiliate_video_ours_gmv), cur)} of affiliate video revenue for this window; Seller Center reports ${money(n(a.affiliate_video_sc_gmv), cur)}. The excess ${money(over, cur)} cannot be missing data — it is the same sales counted on two different bases. Traced day by day the excess appears on nearly every day at a similar proportion, which rules out a day-boundary error and points at what each source includes.`,
+      action: `Do not net this out or scale it away. Ask Reacher whether /affiliate/transactions payment_amount and the Seller Center affiliate figure share a basis — shipping, tax, cancellations and the point at which a refund is booked are the usual candidates.`,
+      evidence: [
+        `capture ${pct(cap, 1)} — above 100%`,
+        `excess ${money(over, cur)}`,
+        a.reconciliation_status === 'exception'
+          ? `components exceed total shop GMV by ${pct(n(a.reconciliation_pct), 1)}`
+          : 'within the window the totals still reconcile',
+        'not a boundary effect — present on nearly every day',
+      ],
+    };
+  }
+
+  if (cap >= 0.95) return null;
 
   const cur = f.shop?.currency || 'USD';
   const disconnected = f.shop?.affiliate_connected === false;
@@ -125,12 +166,19 @@ const capture = (f) => {
     // reliable enough to hang an instruction on. And the shortfall survives on
     // months that closed long ago, so it is not settling lag either — both of
     // the easy explanations are ruled out by evidence.
-    finding: `Seller Center reports ${money(n(a.affiliate_video_sc_gmv), cur)} of affiliate video GMV; the order-line feed accounts for ${money(n(a.affiliate_video_ours_gmv), cur)} of it. The missing ${money(missing, cur)} cannot be classified either way, so the paid/organic split below describes ${pct(cap)} of affiliate revenue rather than all of it.`,
-    action: `This gap is inside Reacher — their Seller Center figure and their own transactions feed disagree for identical dates, and it persists on months that settled long ago, so waiting will not close it. Ask them which affiliate orders are excluded from /affiliate/transactions and whether they can be retrieved.`,
+    // Reacher answered this on 2026-09-08 and the answer is specific enough to
+    // name: their transactions feed covers the Creator tab of Affiliate Center
+    // and matches TikTok's own export exactly. The remainder is the PARTNER tab
+    // — agency-run campaigns — which they do not ingest yet and are adding,
+    // with a field to tell the two apart. Biostime reconciles because it has no
+    // partner campaigns. So this bucket is no longer "data we lack"; it is a
+    // named channel we cannot yet see inside.
+    finding: `Seller Center reports ${money(n(a.affiliate_video_sc_gmv), cur)} of affiliate video GMV; the order-line feed accounts for ${money(n(a.affiliate_video_ours_gmv), cur)} of it. The missing ${money(missing, cur)} is agency-run Partner-tab campaigns, which Reacher does not ingest yet — so the paid/organic split below describes ${pct(cap)} of affiliate revenue rather than all of it.`,
+    action: `Nothing to fix on our side. Reacher confirmed the transactions feed covers the Creator tab only and matches TikTok's export exactly; Partner ingestion is being added with a field distinguishing the two. Until it lands, read every share on this page as a share of the Creator tab.`,
     evidence: [
       `capture ${pct(cap, 1)} of Seller Center's affiliate video GMV`,
-      `${money(missing, cur)} unaccounted for`,
-      'not settling lag — persists on closed months',
+      `${money(missing, cur)} in Partner-tab campaigns`,
+      'confirmed by Reacher 2026-09-08 — not settling lag, not a defect our end',
       disconnected ? 'integrations/status says disconnected (unreliable — dashboard shows active)' : 'integration status: connected',
     ],
   };
@@ -242,17 +290,26 @@ const adDependentCreators = (f) => {
 adDependentCreators.ruleId = 'ad-dependent-creators';
 
 // 7. Traffic that arrives and does not buy — a page problem, not an ads problem.
+//
+// THE BENCHMARK IS NOT COMPUTED HERE. This rule used to take its own median
+// over products with 50,000+ impressions while the Products page took another
+// over every product with a rate. They printed 3.65% and 3.70% under the same
+// words, "shop median", and on Biostime this rule's median came from a single
+// product. Both now read shop_product_stats(), which defines the numerator,
+// the denominator and the eligibility once, in SQL, and returns n so the
+// population can be disclosed instead of implied.
 const conversionDrag = (f) => {
-  const ps = (f.products || []).filter((p) => n(p.impressions) >= 50000 && n(p.click_to_order_rate) != null);
-  if (ps.length < 3) return null;
-
-  const rates = ps.map((p) => n(p.click_to_order_rate)).sort((a, b) => a - b);
-  const median = rates[Math.floor(rates.length / 2)];
-  if (!median) return null;
+  const stats = f.productStats;
+  const median = n(stats?.median_conversion);
+  const medianN = n(stats?.median_n);
+  if (median == null || !medianN || medianN < 3) return null;
 
   const cur = f.shop?.currency || 'USD';
-  const weak = ps
-    .filter((p) => n(p.click_to_order_rate) < median * 0.6 && n(p.clicks) >= 5000)
+  const minClicks = n(stats?.median_min_clicks) ?? 500;
+  const weak = (f.products || [])
+    .filter((p) => n(p.click_to_order_rate) != null
+      && n(p.clicks) >= minClicks
+      && n(p.click_to_order_rate) < median * 0.6)
     .sort((a, b) => n(b.clicks) - n(a.clicks));
   if (!weak.length) return null;
 
@@ -260,12 +317,20 @@ const conversionDrag = (f) => {
   return {
     severity: SEVERITY.WARNING,
     basis: BASIS.MEASURED,
-    at_stake: n(w.clicks) * (median - n(w.click_to_order_rate)) * (n(w.aov) || 0),
+    // Revenue AFFECTED, not money that will be gained. A counterfactual
+    // computed from a median is a model output, and labelling it "at stake"
+    // dresses it up as a forecast.
+    at_stake: weak.reduce((a, x) => a + (n(x.gmv) || 0), 0),
+    action_ids: weak.map((x) => x.product_id).filter(Boolean),
+    drill_to: 'products',
     title: `${weak.length} product${weak.length > 1 ? 's convert' : ' converts'} far below the rest of the shop`,
     finding: `"${(w.title || w.product_id || '').slice(0, 60)}" turns ${pct(n(w.click_to_order_rate), 2)} of clicks into orders against a shop median of ${pct(median, 2)}, on ${Number(n(w.clicks)).toLocaleString()} clicks. Traffic is arriving and leaving. More spend buys more of the same leaving.`,
     action: `Fix the listing before raising budget — price, images, reviews, stock. ${n(w.refund_rate) >= 0.05 ? `Its refund rate is ${pct(n(w.refund_rate), 1)}, which points at the product rather than the page.` : ''}`.trim(),
-    evidence: weak.slice(0, 3).map((x) =>
-      `${(x.title || x.product_id).slice(0, 38)} — ${pct(n(x.click_to_order_rate), 2)} vs ${pct(median, 2)} median, ${money(n(x.gmv), cur)}`),
+    evidence: [
+      `benchmark: ${pct(median, 2)} median across ${medianN} products with ${Number(minClicks).toLocaleString()}+ clicks`,
+      ...weak.slice(0, 3).map((x) =>
+        `${(x.title || x.product_id).slice(0, 38)} — ${pct(n(x.click_to_order_rate), 2)} vs ${pct(median, 2)} median, ${money(n(x.gmv), cur)}`),
+    ],
   };
 };
 conversionDrag.ruleId = 'conversion-drag';
@@ -313,7 +378,7 @@ const allClear = (f) => {
 allClear.ruleId = 'all-clear';
 
 const RULES = [
-  capture, unverifiedBand, concentration, fatigue,
+  capture, unverifiedBand, concentration, declining,
   conversionDrag, refunds, adDependentCreators, blindSpot,
   allClear,
 ];
@@ -418,26 +483,34 @@ organicCreators.ruleId = 'organic-creators';
 
 // 4. Products converting well above the shop — where extra traffic is worth buying.
 const strongConverters = (f) => {
-  const ps = (f.products || []).filter((p) => n(p.impressions) >= 50000 && n(p.click_to_order_rate) != null);
-  if (ps.length < 3) return null;
-  const rates = ps.map((p) => n(p.click_to_order_rate)).sort((a, b) => a - b);
-  const median = rates[Math.floor(rates.length / 2)];
-  if (!median) return null;
+  const stats = f.productStats;
+  const median = n(stats?.median_conversion);
+  const medianN = n(stats?.median_n);
+  if (median == null || !medianN || medianN < 3) return null;
 
   const cur = f.shop?.currency || 'USD';
-  const strong = ps
-    .filter((p) => n(p.click_to_order_rate) >= median * 1.4 && n(p.gmv) > 0)
+  const minClicks = n(stats?.median_min_clicks) ?? 500;
+  const strong = (f.products || [])
+    .filter((p) => n(p.click_to_order_rate) != null
+      && n(p.clicks) >= minClicks
+      && n(p.click_to_order_rate) >= median * 1.4
+      && n(p.gmv) > 0)
     .sort((a, b) => n(b.gmv) - n(a.gmv));
   if (!strong.length) return null;
 
   const s = strong[0];
   return {
     severity: SEVERITY.GOOD, basis: BASIS.MEASURED, at_stake: n(s.gmv) ?? 0,
+    action_ids: strong.map((x) => x.product_id).filter(Boolean),
+    drill_to: 'products',
     title: `${strong.length} product${strong.length > 1 ? 's convert' : ' converts'} well above the shop`,
     finding: `"${(s.title || s.product_id || '').slice(0, 56)}" turns ${pct(n(s.click_to_order_rate), 2)} of clicks into orders against a shop median of ${pct(median, 2)}. Traffic sent here converts — the listing is not the constraint.`,
     action: `These are where extra spend meets the least friction. If budget is going up, put it behind these before the ones that leak at the page.`,
-    evidence: strong.slice(0, 3).map((x) =>
-      `${(x.title || x.product_id).slice(0, 34)} — ${pct(n(x.click_to_order_rate), 2)} vs ${pct(median, 2)}, ${money(n(x.gmv), cur)}`),
+    evidence: [
+      `benchmark: ${pct(median, 2)} median across ${medianN} products with ${Number(minClicks).toLocaleString()}+ clicks`,
+      ...strong.slice(0, 3).map((x) =>
+        `${(x.title || x.product_id).slice(0, 34)} — ${pct(n(x.click_to_order_rate), 2)} vs ${pct(median, 2)}, ${money(n(x.gmv), cur)}`),
+    ],
   };
 };
 strongConverters.ruleId = 'strong-converters';

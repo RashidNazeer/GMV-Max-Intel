@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "node scripts/preview.mjs",
-    "test": "node scripts/classify-tests.mjs && node scripts/recommend-tests.mjs && node scripts/marginal-tests.mjs",
+    "test": "node scripts/classify-tests.mjs && node scripts/window-tests.mjs && node scripts/recommend-tests.mjs && node scripts/decide-tests.mjs && node scripts/marginal-tests.mjs && node scripts/copy-guard.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "keycheck": "node scripts/key-check.mjs",
     "audit:bundle": "node scripts/bundle-audit.mjs",
@@ -19,7 +19,9 @@
     "demo:purge": "node scripts/demo-spend.mjs --purge",
     "check:attribution": "node scripts/check-attribution.mjs",
     "sync:gmvmax": "node scripts/sync-gmvmax.mjs",
-    "export:creators": "node scripts/export-creators.mjs"
+    "export:creators": "node scripts/export-creators.mjs",
+    "check:reconciliation": "node scripts/check-reconciliation.mjs",
+    "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "pg": "^8.23.0",
     "vite": "^6.0.0"
   }
 }

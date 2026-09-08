@@ -233,3 +233,122 @@ td.tight { padding: 8px 12px; }
   text-transform: none;
 }
 .lnk:hover { text-decoration: underline; }
+
+/* ── added with the decision-workflow rebuild ───────────────────────────── */
+
+.nav a{padding:6px 10px;border-radius:8px;color:var(--text-secondary);text-decoration:none;font-size:13px;font-weight:600}
+.nav a:hover{background:var(--surface-2);color:var(--text-primary)}
+.nav a.active{background:var(--accent-soft);color:var(--accent)}
+
+.windowlabel{font-size:12px;white-space:nowrap}
+
+.statuspill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:99px;
+  border:1px solid var(--border-default);background:var(--surface-1);cursor:pointer;
+  font-size:12.5px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
+.statuspill:hover{border-color:var(--accent)}
+.statuspill .dot{width:7px;height:7px;border-radius:99px;display:inline-block}
+.statuspill-ok .dot{background:var(--success)}
+.statuspill-warn .dot{background:var(--warning)}
+.statuspill-bad .dot{background:var(--danger)}
+.statuspill-bad{color:var(--danger);border-color:var(--danger)}
+
+/* the decision header */
+.decision{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:22px;
+  background:var(--surface-1);border:1px solid var(--border-default);border-radius:var(--radius);
+  padding:20px 22px;box-shadow:var(--shadow-sm)}
+.decision-critical{border-left:3px solid var(--danger)}
+.decision-warning{border-left:3px solid var(--warning)}
+.decision-info{border-left:3px solid var(--accent)}
+.decision-good{border-left:3px solid var(--success)}
+.decision-eyebrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-secondary)}
+.decision-icon{font-size:14px}
+.decision-title{font-size:20px;line-height:1.3;margin:10px 0 6px;font-weight:700}
+.decision-reason{font-size:13.5px;line-height:1.6;color:var(--text-secondary);margin:0 0 14px}
+.decision-do{font-size:13px;line-height:1.6;padding:11px 13px;border-radius:9px;
+  background:var(--surface-2);margin-bottom:12px}
+.decision-block{font-size:12.5px;line-height:1.55;padding:9px 12px;border-radius:9px;
+  background:var(--danger-soft);color:var(--danger);margin-bottom:12px}
+.decision-side{border-left:1px solid var(--border-subtle);padding-left:18px;
+  display:flex;flex-direction:column;gap:14px}
+.decision-secondary{padding-top:12px;border-top:1px solid var(--border-subtle)}
+.decision-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.suggestion{display:flex;align-items:center;gap:16px;padding:13px 16px;border-radius:10px;
+  background:var(--accent-soft);margin-bottom:14px;flex-wrap:wrap}
+.suggestion-v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.suggestion-new{color:var(--accent)}
+.suggestion-arrow{font-size:18px;color:var(--text-muted)}
+.suggestion-meta{margin-left:auto;text-align:right;font-size:12.5px;font-weight:600}
+
+.applybox{width:100%;margin-top:10px;padding:13px;border-radius:10px;
+  background:var(--surface-2);border:1px solid var(--border-default)}
+
+.evlist{margin:6px 0 0;padding-left:16px;font-size:12.5px;line-height:1.65;color:var(--text-secondary)}
+.evlist li{margin-bottom:4px}
+.suppressed{padding-top:12px;border-top:1px solid var(--border-subtle)}
+
+/* chips */
+.chip{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;
+  letter-spacing:.02em;white-space:nowrap}
+.chip-ok{background:var(--success-soft);color:var(--success)}
+.chip-warn{background:var(--warning-soft);color:var(--warning)}
+.chip-bad{background:var(--danger-soft);color:var(--danger)}
+.chip-info{background:var(--surface-3);color:var(--text-secondary)}
+
+.hint{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
+  margin-left:5px;border-radius:99px;background:var(--surface-3);color:var(--text-muted);
+  font-size:9.5px;font-weight:700;cursor:help;vertical-align:middle}
+.hint:focus{outline:2px solid var(--accent);outline-offset:1px}
+
+.unavail{color:var(--text-muted);border-bottom:1px dotted var(--border-default);cursor:help}
+.unavail-why{display:none}
+
+/* toolbar + pager */
+.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:2px 0 10px}
+.pager{display:flex;gap:10px;align-items:center;font-size:12.5px;flex-wrap:wrap}
+.sortbtn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;
+  font-weight:inherit;display:inline-flex;align-items:center;gap:4px}
+.sortbtn:hover{color:var(--accent)}
+.sortmark{font-size:9px;color:var(--accent)}
+
+/* tabs inside a detail view */
+.tabbar{display:flex;gap:4px;border-bottom:1px solid var(--border-default);padding-bottom:0}
+.tabbar button{background:none;border:0;border-bottom:2px solid transparent;padding:9px 14px;
+  font-size:13px;font-weight:600;color:var(--text-secondary);cursor:pointer}
+.tabbar button:hover{color:var(--text-primary)}
+.tabbar button.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tabcount{margin-left:6px;font-size:11px;color:var(--text-muted)}
+
+.crumbs{font-size:13px}
+.clamp1{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.row-data{background:var(--surface-2)}
+.row-baseline{background:var(--surface-2);font-weight:600}
+.recon-exception{border-left:3px solid var(--danger)}
+.altfit{padding:12px 14px;border-radius:10px;background:var(--surface-2)}
+.seg-over{background:var(--danger)}
+.sw.seg-over{background:var(--danger)}
+
+table.plain{width:100%;border-collapse:collapse;font-size:13px}
+table.plain td{padding:7px 10px;border-bottom:1px solid var(--border-subtle);vertical-align:top;line-height:1.55}
+table.plain tr:last-child td{border-bottom:0}
+
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+
+/* Responsive. The table region scrolls; the page never does. */
+@media (max-width:1200px){
+  .decision{grid-template-columns:1fr}
+  .decision-side{border-left:0;border-top:1px solid var(--border-subtle);padding-left:0;padding-top:14px}
+  .g5{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  .g5,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .topbar{flex-wrap:wrap;height:auto;padding:10px 14px;gap:8px}
+  .windowlabel{order:10}
+}
+@media (max-width:560px){
+  .g5,.g4,.g3,.g2{grid-template-columns:1fr}
+  .decision-title{font-size:17px}
+  .suggestion{gap:10px}
+  .nav{overflow-x:auto}
+}

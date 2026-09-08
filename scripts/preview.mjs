@@ -12,12 +12,18 @@
 import { createClient } from '@supabase/supabase-js';
 import { env, need } from './_env.mjs';
 import { recommend, whatsWorking } from '../src/lib/recommend.js';
+import { decide } from '../src/lib/decide.js';
+import { fitSpendResponse, TARGET } from '../src/lib/marginal.js';
+import { reportWindow, modelWindow } from '../src/lib/window.js';
 
 const [URL, ANON] = need('VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY');
 const days = Number(process.argv[2] || 30);
-const iso = (d) => d.toISOString().slice(0, 10);
-const END = iso(new Date());
-const START = iso(new Date(Date.now() - days * 864e5));
+// THE canonical window — the same one the app uses, so the preview shows what
+// the screen shows rather than a second opinion about the dates.
+const WIN = reportWindow(days);
+const MODEL = modelWindow(WIN.end, { trainingDays: 120 });
+const START = WIN.start;
+const END = WIN.end;
 
 const db = createClient(URL, ANON, { auth: { persistSession: false } });
 const { error: authErr } = await db.auth.signInWithPassword({
@@ -93,7 +99,7 @@ for (const s of shops || []) {
   console.log(`\nCREATIVE`);
   console.log(`  ${creative.video_count} videos, ${creative.creators} creators, ${m(creative.gmv, cur)}`);
   console.log(`  top1 ${p(creative.top1_share)} · top5 ${p(creative.top5_share)} · top10 ${p(creative.top10_share)}`);
-  console.log(`  fading ${creative.fatigued_videos} (${m(creative.fatigued_gmv, cur)}) · ` +
+  console.log(`  declining ${creative.declining_videos} (${m(creative.declining_gmv, cur)}) · ` +
     `rising ${creative.rising_videos} (${m(creative.rising_gmv, cur)}) · new this week ${creative.new_videos}`);
   console.log(`  posting dates known for ${p(creative.freshness_coverage)} of revenue`);
 
@@ -110,10 +116,91 @@ for (const s of shops || []) {
   const noDiscount = products.every((x) => x.discount_pct == null);
   console.log(`  discount depth: ${noDiscount ? 'UNAVAILABLE (source returns null) — page says so' : 'available'}`);
 
+  // ── THE DECISION — the arbitration pipeline, over the real rows ───────────
+  // The rules below notice things; this decides between them. Running it here
+  // is what catches a candidate that can never fire because a column it reads
+  // was renamed in SQL — the exact failure mode this script exists for.
+  const [stats, spendRows, campaigns, declining, fatigued] = await Promise.all([
+    call('shop_product_stats', { p_shop_id: id, p_start: START, p_end: END }).then(one),
+    call('shop_spend_daily', { p_shop_id: id, p_start: MODEL.start, p_end: MODEL.end }),
+    db.from('gmv_max_campaigns').select('campaign_id,status,target_roas,daily_budget')
+      .eq('shop_id', id).then((r) => r.data || []),
+    // Both statuses, because creative health counts them together — see the
+    // note in facts.js. A finding whose count and id set disagree sends the
+    // buyer to a list that does not match the number they clicked.
+    call('shop_top_videos', {
+      p_shop_id: id, p_start: START, p_end: END, p_limit: 500, p_status: 'declining',
+    }),
+    call('shop_top_videos', {
+      p_shop_id: id, p_start: START, p_end: END, p_limit: 500, p_status: 'fatigue_risk',
+    }),
+  ]);
+  const decliningAll = [...(declining || []), ...(fatigued || [])];
+
+  const enabled = campaigns.filter((c) => c.status === 'ENABLE');
+  const dailyBudget = enabled.reduce((x, c) => x + (Number(c.daily_budget) || 0), 0) || null;
+  const marginal = spendRows?.length
+    ? fitSpendResponse(spendRows.map((d) => ({ spend: d.spend, revenue: d.total_shop_gmv })),
+      { target: TARGET.TOTAL_SHOP_GMV, dailyBudget, horizonDays: 7 })
+    : null;
+
+  const shopFacts = {
+    shop: { id, shop_name: s.shop_name, currency: cur, affiliate_connected: s.affiliate_connected },
+    days, start: START, end: END, attribution: a, creative, videos, products, roas,
+    productStats: stats, marginal, dailyBudget,
+    decliningIds: decliningAll.map((v) => v.video_id),
+    weakProductIds: [],
+  };
+
+  // The count in the finding and the ids handed to the drill-down must be the
+  // same population, or the buyer lands on a list that does not match what they
+  // clicked. Asserted here because it was wrong and only live data showed it.
+  if (Number(creative.declining_videos) !== shopFacts.decliningIds.length) {
+    console.log();
+    problems++;
+  }
+
+  // The count in the finding and the ids handed to the drill-down must be the
+  // same population, or the buyer opens a list that does not match the number
+  // they clicked. Asserted here because it WAS wrong — creative health counted
+  // declining + fatigue_risk (25) while the id set fetched only declining (19)
+  // — and only running this against live data revealed it.
+  if (Number(creative.declining_videos) !== shopFacts.decliningIds.length) {
+    console.log(`  MISMATCH: creative health counts ${creative.declining_videos} declining videos, `
+      + `but the id set has ${shopFacts.decliningIds.length}`);
+    problems++;
+  }
+
+  const d = decide(shopFacts);
+  console.log('\nTHE DECISION');
+  if (d.primary) {
+    console.log(`  PRIMARY: ${d.primary.action_code}  [${d.primary.severity}]  <${d.primary.source_mode}>`);
+    console.log(`     ${d.primary.title}`);
+    console.log(`     ${d.primary.reason}`);
+    console.log(`     DO: ${d.primary.action_text}`);
+    if (d.primary.suggested_value != null) {
+      console.log(`     CHANGE: ${d.primary.current_value} -> ${d.primary.suggested_value} (${d.primary.change_pct != null ? (d.primary.change_pct * 100).toFixed(0) + '%' : '—'}) over ${d.primary.test_days}d`);
+    }
+    console.log(`     CONFIDENCE: ${d.primary.confidence_label} (rec ${d.primary.confidence == null ? '—' : d.primary.confidence.toFixed(2)}, model ${d.primary.model_confidence == null ? '—' : d.primary.model_confidence.toFixed(2)}, coverage ${d.primary.data_coverage == null ? '—' : d.primary.data_coverage.toFixed(2)})`);
+    const failed = (d.primary.guardrails || []).filter((g) => !g.passed);
+    if (failed.length) console.log(`     BLOCKED BY: ${failed.map((g) => g.detail || g.name).join('; ')}`);
+    if (d.primary.affected_ids?.length) console.log(`     AFFECTED IDS: ${d.primary.affected_ids.length} (drill to ${d.primary.drill_to})`);
+  } else {
+    console.log('  no primary action — not enough evidence in this window');
+  }
+  for (const sup of d.suppressed) {
+    console.log(`  suppressed: ${sup.action_code} — ${sup.why}`);
+  }
+  console.log(`  model: ${marginal ? `${marginal.status} against ${marginal.target_label}` : 'no spend data'}`);
+  console.log(`  benchmark: ${stats?.median_conversion == null ? 'unavailable' : (Number(stats.median_conversion) * 100).toFixed(2) + '%'} across ${stats?.median_n ?? 0} products with ${stats?.median_min_clicks ?? '?'}+ clicks`);
+  console.log(`  counters: ${stats?.products_with_sales ?? 0} with sales, ${stats?.products_with_traffic ?? 0} with traffic, ${stats?.catalog_products ?? 0} in catalogue`);
+  console.log(`  reconciliation: ${a?.reconciliation_status} gap ${Number(a?.reconciliation_gap ?? 0).toFixed(2)}, capture ${(Number(a?.affiliate_capture ?? 0) * 100).toFixed(1)}%`);
+
   // ── DECISIONS — the real rules, over the real rows ─────────────────────────
   const recs = recommend({
     shop: { shop_name: s.shop_name, currency: cur, affiliate_connected: s.affiliate_connected },
-    days, attribution: a, creative, videos, products, roas,
+    days, attribution: a, creative, videos, products, roas, productStats: stats,
+    decliningIds: shopFacts.decliningIds,
   });
   console.log(`\nWHAT TO DO NEXT  (${recs.length} finding${recs.length === 1 ? '' : 's'})`);
   for (const r of recs) {

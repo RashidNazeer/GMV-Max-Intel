@@ -1,105 +1,364 @@
-// The decision panel — the first thing on the page, because the spec's whole
-// premise is that a media buyer should know what to do next inside the first
-// screenful, not after reading six charts.
+// The decision surface.
 //
-// It shows BOTH sides. An earlier version listed only problems, which turned it
-// into a complaints box: a shop doing three things well read as nothing but
-// faults, and someone deciding where next month's budget goes needs to know
-// what to protect as much as what to fix.
+// ── WHAT THIS REPLACES ─────────────────────────────────────────────────────
+// Six findings, every one fully expanded, each with a paragraph, an instruction
+// and a row of evidence chips — about 3,900 pixels of page before anything was
+// clickable. Nothing ranked them and nothing resolved the contradictions
+// between them.
 //
-// The rules live in src/lib/recommend.js and are pure and unit-tested. This
-// file only renders what they returned — no filtering, ranking or wording of
-// its own. If a rule stayed silent the screen stays silent too, and there is
-// exactly one place to look for why.
+// Now: ONE primary action, its suggested change, its confidence, and a route to
+// the evidence. Everything else collapses to a row. The alternatives that lost
+// are listed with the reason they lost, because "why is it not telling me to
+// raise budget" is a question the tool should answer rather than provoke.
 import { useState } from 'react';
-import { recommend, whatsWorking } from '../lib/recommend.js';
-import { Basis } from './ui.jsx';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { setRecommendationStatus } from '../lib/api.js';
+import { ACTION } from '../lib/decide.js';
+import { Basis, Hint, StatusChip, money, pct, fixed } from './ui.jsx';
 
 const ICON = { critical: '⛔', warning: '⚠', info: 'ℹ', good: '✓' };
 
-function Finding({ r }) {
+const ACTION_LABEL = {
+  [ACTION.INCREASE_BUDGET]: 'Raise budget',
+  [ACTION.DECREASE_BUDGET]: 'Cut budget',
+  [ACTION.INCREASE_TARGET_ROI]: 'Raise Target ROI',
+  [ACTION.DECREASE_TARGET_ROI]: 'Lower Target ROI',
+  [ACTION.TEST_MAX_DELIVERY]: 'Test Max Delivery',
+  [ACTION.EXIT_MAX_DELIVERY]: 'Exit Max Delivery',
+  [ACTION.HOLD]: 'Hold',
+  [ACTION.REVIEW_CREATIVE]: 'Review creative',
+  [ACTION.REVIEW_PROMOTION]: 'Review promotion',
+  [ACTION.REVIEW_LISTING]: 'Review listings',
+  [ACTION.FIX_DATA]: 'Fix data',
+  [ACTION.INSUFFICIENT_DATA]: 'Collect more data',
+};
+
+/** Format a suggested value in the unit it is actually in. */
+function value(v, unit, currency) {
+  if (v == null) return '—';
+  if (unit === 'currency_per_day') return `${money(v, currency)}/day`;
+  if (unit === 'roi') return Number(v).toFixed(2);
+  return String(v);
+}
+
+/**
+ * The decision header. Everything a buyer needs to act, in one screenful.
+ */
+export function DecisionHeader({ decision, shop, scope, stored, onDrill }) {
+  const [params] = useSearchParams();
+  const cur = shop?.currency || 'USD';
+  const p = decision?.primary;
+
+  if (!p) {
+    return (
+      <div className="card pad">
+        <div className="k">Next action</div>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
+          Not enough data in this window to reach a conclusion. That is an absence of evidence,
+          not an all-clear.
+        </p>
+      </div>
+    );
+  }
+
+  const blocked = (p.guardrails || []).filter((g) => !g.passed);
+
   return (
-    <div className={`rec rec-${r.severity}`}>
-      <div className="icon">{ICON[r.severity]}</div>
-      <div style={{ minWidth: 0 }}>
-        <h4>{r.title} <Basis kind={r.basis} /></h4>
-        <p>{r.finding}</p>
-        <div className="do"><b>{r.severity === 'good' ? 'Keep:' : 'Do:'}</b> {r.action}</div>
-        {r.evidence?.length > 0 && (
-          <div className="ev">{r.evidence.map((e, i) => <span key={i}>{e}</span>)}</div>
+    <div className={`decision decision-${p.severity}`}>
+      <div className="decision-main">
+        <div className="decision-eyebrow">
+          <span className="decision-icon">{ICON[p.severity]}</span>
+          <strong>{ACTION_LABEL[p.action_code] || p.action_code}</strong>
+          <Basis kind={p.source_mode} />
+          <ConfidenceChip decision={p} />
+        </div>
+
+        <h2 className="decision-title">{p.title}</h2>
+        <p className="decision-reason">{p.reason}</p>
+
+        {p.suggested_value != null && (
+          <div className="suggestion">
+            <div>
+              <div className="k">Now</div>
+              <div className="suggestion-v">{value(p.current_value, p.value_unit, cur)}</div>
+            </div>
+            <span className="suggestion-arrow">→</span>
+            <div>
+              <div className="k">Test</div>
+              <div className="suggestion-v suggestion-new">{value(p.suggested_value, p.value_unit, cur)}</div>
+            </div>
+            <div className="suggestion-meta">
+              <div>{p.change_pct != null ? `${p.change_pct > 0 ? '+' : ''}${pct(p.change_pct, 0)}` : ''}</div>
+              <div className="muted">{p.test_days ? `for ${p.test_days} days` : ''}</div>
+            </div>
+          </div>
         )}
+
+        <div className="decision-do"><b>Do:</b> {p.action_text}</div>
+
+        {blocked.length > 0 && (
+          <div className="decision-block">
+            <b>Blocked by:</b> {blocked.map((g) => g.detail || g.name).join('; ')}
+          </div>
+        )}
+
+        <DecisionActions rec={stored} decision={p} shop={shop} onDrill={onDrill} params={params} />
+      </div>
+
+      <div className="decision-side">
+        <Evidence items={p.evidence} />
+        {decision.secondary && decision.secondary.action_code !== p.action_code && (
+          <div className="decision-secondary">
+            <div className="k">Also worth doing</div>
+            <div style={{ fontSize: 12.5, marginTop: 4 }}>{decision.secondary.title}</div>
+          </div>
+        )}
+        <Suppressed items={decision.suppressed} />
       </div>
     </div>
   );
 }
 
-export default function Decisions({ facts, loading }) {
-  const [tab, setTab] = useState('fix');
+function Evidence({ items }) {
+  if (!items?.length) return null;
+  return (
+    <div>
+      <div className="k">Evidence</div>
+      <ul className="evlist">
+        {items.slice(0, 4).map((e, i) => <li key={i}>{e}</li>)}
+      </ul>
+    </div>
+  );
+}
 
-  if (loading) {
-    return (
-      <div className="card pad">
-        <div className="k">What to do next</div>
-        <div className="skel" style={{ height: 92, marginTop: 12 }} />
-      </div>
-    );
+/**
+ * What the pipeline decided NOT to tell you, and why.
+ *
+ * This is the whole point of the arbitration being explicit. A buyer who has
+ * been told "raise budget" by a different tool needs to see that this one
+ * considered it and suppressed it, rather than that it never thought of it.
+ */
+function Suppressed({ items }) {
+  const [open, setOpen] = useState(false);
+  if (!items?.length) return null;
+  return (
+    <div className="suppressed">
+      <button className="lnk" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide' : `Why not ${items.length === 1 ? 'the other action' : `the other ${items.length} actions`}?`}
+      </button>
+      {open && (
+        <ul className="evlist">
+          {items.map((s, i) => (
+            <li key={i}>
+              <strong>{ACTION_LABEL[s.action_code] || s.action_code}</strong> — {s.why}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Confidence, with the three concepts kept visibly apart.
+ *
+ * Source type (measured/simulated) is NOT confidence. Model R-squared is NOT
+ * confidence. Both were previously shown in ways that read as one.
+ */
+function ConfidenceChip({ decision }) {
+  const c = decision.confidence;
+  if (c == null) {
+    return <span className="chip chip-info" title="No confidence score: this action does not depend on a model estimate.">confidence n/a</span>;
   }
+  const tone = c >= 0.7 ? 'ok' : c >= 0.45 ? 'warn' : 'bad';
+  const parts = (decision.confidence_parts || [])
+    .map((p) => `${p.name}: ${(Number(p.value) * 100).toFixed(0)}%`).join('\n');
+  const detail = [
+    `Recommendation confidence: how much to trust THIS action.`,
+    parts,
+    decision.model_confidence != null ? `Model confidence (separate): ${(decision.model_confidence * 100).toFixed(0)}%` : null,
+    decision.data_coverage != null ? `Data coverage (separate): ${(decision.data_coverage * 100).toFixed(0)}%` : null,
+  ].filter(Boolean).join('\n');
+  return <span className={`chip chip-${tone}`} title={detail}>{decision.confidence_label} confidence</span>;
+}
 
-  const problems = recommend(facts).filter((r) => r.severity !== 'good');
-  const working = whatsWorking(facts);
-  const allClear = recommend(facts).filter((r) => r.severity === 'good');
+/**
+ * The lifecycle.
+ *
+ * "Mark applied" records that a HUMAN made the change in TikTok. It does not
+ * make one — nothing in this codebase writes a setting — and the confirmation
+ * says so in those words, because a button labelled "apply" next to a suggested
+ * budget will otherwise be read as doing it.
+ */
+function DecisionActions({ rec, decision, shop, onDrill, params }) {
+  const qc = useQueryClient();
+  const [applying, setApplying] = useState(false);
+  const [actual, setActual] = useState('');
 
-  if (!problems.length && !working.length) {
-    // Not "everything is fine" — there was nothing to reason over. Claiming
-    // "no issues" here would be a conclusion we have not earned.
-    return (
-      <div className="card pad">
-        <div className="k">What to do next</div>
-        <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
-          Not enough data in this window to reach a conclusion. Sync a shop, or widen the range.
-        </p>
-      </div>
-    );
-  }
+  const mut = useMutation({
+    mutationFn: ({ status, actualValue, reason }) =>
+      setRecommendationStatus(rec, status, { actualValue, reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['recs'] });
+      setApplying(false);
+    },
+  });
 
-  const shown = tab === 'fix'
-    ? (problems.length ? problems : allClear)
-    : working;
+  const drill = decision.drill_to;
+  const drillLabel = drill === 'creatives' ? 'Review videos'
+    : drill === 'products' ? 'Review products'
+    : drill === 'scenario' ? 'View scenario'
+    : null;
+
+  const drillHref = () => {
+    const q = new URLSearchParams();
+    for (const k of ['shop', 'days']) if (params.get(k)) q.set(k, params.get(k));
+    if (decision.affected_ids?.length) q.set('ids', decision.affected_ids.join(','));
+    if (drill === 'creatives') return `/creatives?${q}`;
+    if (drill === 'products') return `/products?${q}`;
+    return `/campaigns?${q}`;
+  };
 
   return (
-    <div className="card pad">
-      <div className="hd" style={{ marginBottom: 12 }}>
-        <h2>What to do next</h2>
-        <span className="sub">Ranked by money at stake · every finding traces to the numbers beside it</span>
-      </div>
-
-      <div className="seg" style={{ marginBottom: 14 }}>
-        <button onClick={() => setTab('fix')} aria-pressed={tab === 'fix'}>
-          Needs attention
-          <span className="cnt">{problems.length}</span>
-        </button>
-        <button onClick={() => setTab('working')} aria-pressed={tab === 'working'}>
-          What&rsquo;s working
-          <span className="cnt">{working.length}</span>
-        </button>
-      </div>
-
-      {shown.map((r) => <Finding key={r.id} r={r} />)}
-
-      {!shown.length && (
-        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          {tab === 'working'
-            ? 'No strength cleared its evidence bar in this window. That is not the same as nothing going well — it means nothing was measurable enough to state.'
-            : 'Nothing needs attention in this window.'}
-        </p>
+    <div className="decision-actions">
+      {drillLabel && (
+        <Link className="btn btn-primary" to={drillHref()}>
+          {drillLabel}
+          {decision.affected_ids?.length ? ` (${decision.affected_ids.length})` : ''}
+        </Link>
       )}
 
-      <p className="muted" style={{ fontSize: 11.5, margin: '14px 0 0' }}>
-        Every finding is produced by a written rule from the numbers shown beside it — no model decides
-        anything here. Each rule stays silent when its evidence is too thin, so an empty list means
-        &ldquo;nothing to say&rdquo;, not &ldquo;nothing checked&rdquo;. This tool recommends; a person acts.
-        It never writes to TikTok.
-      </p>
+      {rec && rec.status === 'proposed' && (
+        <>
+          <button className="btn" disabled={mut.isPending}
+            onClick={() => mut.mutate({ status: 'planned' })}>Mark planned</button>
+          <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
+          <button className="btn" disabled={mut.isPending}
+            onClick={() => mut.mutate({ status: 'dismissed', reason: 'dismissed from overview' })}>Dismiss</button>
+        </>
+      )}
+
+      {rec && rec.status === 'planned' && (
+        <>
+          <span className="chip chip-info">Planned</span>
+          <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
+        </>
+      )}
+
+      {rec && rec.status === 'applied' && (
+        <span className="chip chip-ok">
+          Applied {rec.applied_value != null ? `at ${rec.applied_value}` : ''}
+          {rec.applied_at ? ` · ${new Date(rec.applied_at).toLocaleDateString()}` : ''}
+        </span>
+      )}
+
+      {applying && (
+        <div className="applybox">
+          <div style={{ fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+            <strong>This records a change you have already made in TikTok.</strong> It does not
+            change any setting — nothing in this tool can. Enter the value you actually set, which
+            may differ from the suggestion.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="input" placeholder={decision.suggested_value != null ? String(Number(decision.suggested_value).toFixed(2)) : 'value set'}
+              value={actual} onChange={(e) => setActual(e.target.value)} style={{ width: 130 }} />
+            <button className="btn btn-primary" disabled={mut.isPending}
+              onClick={() => mut.mutate({ status: 'applied', actualValue: actual === '' ? null : Number(actual) })}>
+              Record it
+            </button>
+            <button className="btn" onClick={() => setApplying(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {mut.error && <span className="muted" style={{ color: 'var(--danger)' }}>{mut.error.message}</span>}
+    </div>
+  );
+}
+
+/**
+ * The action queue: one line per candidate, ranked, with its own way through.
+ *
+ * Data repairs are kept in their own lane. A blocked dataset and a budget
+ * opportunity are not the same kind of task, and a queue that mixes them is one
+ * nobody can work through.
+ */
+export function PriorityTable({ decision, shop, records }) {
+  const [params] = useSearchParams();
+  const cur = shop?.currency || 'USD';
+  if (!decision?.all?.length) return null;
+
+  const byFingerprint = new Map((records || []).map((r) => [r.fingerprint, r]));
+  const rows = decision.all;
+
+  const href = (r) => {
+    const q = new URLSearchParams();
+    for (const k of ['shop', 'days']) if (params.get(k)) q.set(k, params.get(k));
+    if (r.affected_ids?.length) q.set('ids', r.affected_ids.join(','));
+    if (r.drill_to === 'creatives') return `/creatives?${q}`;
+    if (r.drill_to === 'products') return `/products?${q}`;
+    if (r.action_code === ACTION.FIX_DATA) return `/data?${q}`;
+    return `/campaigns?${q}`;
+  };
+
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      <div className="pad" style={{ paddingBottom: 8 }}>
+        <div className="k">Action queue</div>
+        <div className="sub">Ranked by evidence, severity and how much revenue is affected.</div>
+      </div>
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Main reason</th>
+              <th className="num">Suggested change</th>
+              <th>Confidence</th>
+              <th className="num">
+                Revenue affected
+                <Hint text="Revenue currently flowing through the affected entities. NOT a forecast of money gained or lost — historical GMV is not a prediction." />
+              </th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const rec = byFingerprint.get(r.fingerprint);
+              return (
+                <tr key={r.fingerprint} className={r.lane === 'data' ? 'row-data' : undefined}>
+                  <td className="tight">
+                    <span className="decision-icon">{ICON[r.severity]}</span>{' '}
+                    <strong>{ACTION_LABEL[r.action_code] || r.action_code}</strong>
+                    {r.lane === 'data' && <span className="chip chip-info" style={{ marginLeft: 6 }}>data</span>}
+                    {rec && rec.status !== 'proposed' && (
+                      <span className={`chip chip-${rec.status === 'applied' ? 'ok' : 'info'}`} style={{ marginLeft: 6 }}>
+                        {rec.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="tight"><span className="clamp1">{r.title}</span></td>
+                  <td className="num tight">
+                    {r.suggested_value != null
+                      ? <>{value(r.current_value, r.value_unit, cur)} → <strong>{value(r.suggested_value, r.value_unit, cur)}</strong></>
+                      : <span className="muted">—</span>}
+                  </td>
+                  <td className="tight">
+                    {r.confidence == null
+                      ? <span className="muted">n/a</span>
+                      : <span className={`chip chip-${r.confidence >= 0.7 ? 'ok' : r.confidence >= 0.45 ? 'warn' : 'bad'}`}>
+                          {r.confidence_label}
+                        </span>}
+                  </td>
+                  <td className="num tight">{r.revenue_affected == null ? '—' : money(r.revenue_affected, cur)}</td>
+                  <td className="tight"><Link className="lnk" to={href(r)}>Open →</Link></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

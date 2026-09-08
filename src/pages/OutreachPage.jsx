@@ -9,6 +9,7 @@
 // `outreach` edge function, which checks the caller is the Boss, clamps the
 // recipient count and daily rate, and writes an audit row before it acts.
 import { useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
 import { creatorGrowth, allCreatorGrowth, productCatalog, outreach, outreachLog } from '../lib/api.js';
@@ -17,7 +18,9 @@ import { Card, Stat, Note, Skeleton, Empty, money, pct } from '../components/ui.
 const MAX_MESSAGE = 500;
 const MAX_NAME = 30;
 
-export default function OutreachPage({ shop, end }) {
+export default function OutreachPage() {
+  const { shop, scope } = useOutletContext();
+  const end = scope.end;
   const cur = shop.currency || 'USD';
 
   // ── the shortlist ─────────────────────────────────────────────────────────

@@ -101,6 +101,30 @@ for (const shop of shops) {
         .upsert(normalizeCampaign(c, shop.id, settings, 'reacher'), { onConflict: 'shop_id,campaign_id' });
       if (cErr) throw new Error(`campaign ${c.campaign_id}: ${cErr.message}`);
 
+      // ── APPEND-ONLY SETTINGS SNAPSHOT ────────────────────────────────────
+      // Reacher's /changes feed is empty and /settings returns nulls, so no
+      // settings history exists and none can be reconstructed for the past.
+      // Every day without a snapshot is a day of evidence permanently lost,
+      // which is why this writes unconditionally rather than waiting for a
+      // feature to need it. Consecutive snapshots are what campaign_setting_
+      // changes() diffs to detect a change — and a DETECTED change is kept
+      // distinct from a buyer REPORTING one.
+      const { error: sErr } = await db.from('campaign_setting_snapshots').insert({
+        shop_id: shop.id,
+        campaign_id: String(c.campaign_id),
+        campaign_name: c.campaign_name ?? null,
+        status: c.status ?? null,
+        target_roas: c.roas_bid ?? null,
+        daily_budget: c.budget ?? null,
+        campaign_type: c.shopping_ads_type ?? null,
+        currency: c.currency ?? null,
+        data_source: 'reacher',
+        raw: c,
+      });
+      // A snapshot is evidence, not a gate: failing to record one must not
+      // abort a sync that is otherwise collecting real spend.
+      if (sErr) console.log(`  snapshot ${c.campaign_id}: ${sErr.message.slice(0, 80)}`);
+
       const met = await reacher.campaignMetrics(shop.reacher_shop_id, c.campaign_id, START, END)
         .catch(() => ({ data: [] }));
       const rows = (met.data || []).map((m) => normalizeCampaignDay(m, shop.id, String(c.campaign_id), 'reacher'));

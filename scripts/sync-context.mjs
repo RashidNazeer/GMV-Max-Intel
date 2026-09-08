@@ -10,6 +10,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
+import { chunkWindow } from '../src/lib/window.js';
 import {
   normalizeDailyChannels, normalizeVideo,
   normalizeProductCatalog, normalizeProductDay,
@@ -73,12 +74,30 @@ for (const shop of shops) {
 
   // ── Layer 2: daily channel mix ────────────────────────────────────────────
   await layer(shop, 'shop_channels', async () => {
-    const res = await reacher.shopGmvTimeseries(shop.reacher_shop_id, START, END);
-    const series = res.series || [];
-    const rows = series.map((d) => normalizeDailyChannels(d, shop.id, res.currency_code));
-    const written = await upsert('shop_daily_channels', rows, 'shop_id,day');
-    const total = series.reduce((a, d) => a + (Number(d.gmv) || 0), 0);
-    return { received: series.length, written, note: `shop GMV $${total.toFixed(0)}` };
+    // SELLER CENTER CAPS A REQUEST AT 90 DAYS. This asked for the whole window
+    // in one call, so a 92-day sync failed with "Date range exceeds maximum of
+    // 90 days" — for every shop, on every run, while the app carried on
+    // rendering whatever an older successful sync had left behind. The failure
+    // was recorded and nothing surfaced it.
+    //
+    // Chunking fixes a request that is merely too long. It does NOT recover
+    // dates the provider no longer retains: Seller Center keeps 90 days, so
+    // anything older than that is gone and no amount of splitting brings it
+    // back. The note says how many chunks so a partial backfill is visible.
+    const windows = chunkWindow(START, END, 90);
+    let received = 0;
+    let written = 0;
+    let total = 0;
+    for (const w of windows) {
+      const res = await reacher.shopGmvTimeseries(shop.reacher_shop_id, w.start, w.end);
+      const series = res.series || [];
+      const rows = series.map((d) => normalizeDailyChannels(d, shop.id, res.currency_code));
+      received += series.length;
+      written += await upsert('shop_daily_channels', rows, 'shop_id,day');
+      total += series.reduce((a, d) => a + (Number(d.gmv) || 0), 0);
+    }
+    const chunks = windows.length > 1 ? ` · ${windows.length} chunks` : '';
+    return { received, written, note: `shop GMV $${total.toFixed(0)}${chunks}` };
   });
 
   // ── Layer 3: the video feed (enrichment only) ─────────────────────────────

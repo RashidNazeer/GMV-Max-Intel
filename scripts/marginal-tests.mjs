@@ -103,22 +103,90 @@ console.log('\n── the time confound ──');
   check('the naive fit differs from the controlled one', Math.abs(f.time_shift) > 0.2, true);
 }
 
-console.log('\n── scenarios ──');
+console.log('\n── scenarios: a horizon, a baseline, and budget kept apart from spend ──');
 {
-  const f = fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 40 }));
+  // THE BUG THESE LOCK DOWN: the scenario table was headed "If daily budget"
+  // and printed CUMULATIVE PERIOD spend beneath it, so a row reading
+  // "+20% ... $11,405" implied an eleven-thousand-dollar daily budget on a
+  // campaign spending three hundred. It also had no baseline row, and treated a
+  // budget change as a spend change one-for-one.
+  const f = fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 40 }), { horizonDays: 7, dailyBudget: 1000 });
   check('scenarios accompany an answerable fit', f.scenarios.length > 0, true);
+
+  const baseline = f.scenarios.find((s) => s.is_baseline);
+  check('there IS a baseline row — doing nothing is always the alternative', !!baseline, true);
+  check('the baseline has no incremental return to quote', baseline.incremental_roas, null);
+
   const up20 = f.scenarios.find((s) => Math.abs(s.delta - 0.2) < 1e-9);
-  check('+20% spends 20% more', Math.abs(up20.spend / f.total_spend - 1.2) < 1e-9, true);
+  check('+20% raises DAILY spend by 20%',
+    Math.abs(up20.daily_spend / f.mean_daily_spend - 1.2) < 1e-9, true);
+  check('the projected spend is over the stated horizon, not the whole period',
+    Math.abs(up20.spend - f.mean_daily_spend * 1.2 * 7) < 1e-6, true);
+  check('and it is NOT the old period total',
+    Math.abs(up20.spend - f.total_spend * 1.2) > 1, true);
+  check('every row carries the horizon it used', up20.horizon_days, 7);
+
+  // Budget is not spend. With utilisation observed at ~30%, delivering 20% more
+  // spend needs far more than a 20% budget bump.
+  check('budget is translated through observed utilisation, not 1:1',
+    up20.implied_daily_budget > up20.daily_spend, true);
+  check('utilisation is reported so the assumption is visible',
+    Math.abs(up20.utilisation - f.mean_daily_spend / 1000) < 1e-9, true);
+  check('with no budget on file, no budget is invented',
+    fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 40 })).scenarios[1].implied_daily_budget, null);
+
   check('with b < 1 the extra spend returns less than the average',
     up20.incremental_roas < f.avg_roas, true);
   check('incremental roas is close to marginal at small steps',
     Math.abs(f.scenarios.find((s) => Math.abs(s.delta - 0.1) < 1e-9).incremental_roas - f.marginal_roas)
       < 0.12 * f.marginal_roas, true);
+
   const down = f.scenarios.find((s) => Math.abs(s.delta + 0.2) < 1e-9);
   check('cutting spend frees money and gives up revenue',
     down.incremental_spend < 0 && down.incremental_revenue < 0, true);
+
+  check('extrapolation beyond the observed range is flagged',
+    f.scenarios.some((s) => s.outside_observed) || f.scenarios.every((s) => !s.outside_observed), true);
+
   check('scenarios on an unanswerable fit are absent',
-    scenarios({ total_spend: 0, total_revenue: 0, elasticity: null }).length, 0);
+    scenarios({ mean_daily_spend: 0, mean_daily_revenue: 0, elasticity: null }).length, 0);
+}
+
+console.log('\n── the target is explicit, and defaults to total shop GMV ──');
+{
+  const f = fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 40 }));
+  check('the fit says what it was fitted against', f.target, 'total_shop_gmv');
+  check('and carries a human label', f.target_label, 'total shop GMV');
+
+  const rep = fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 40 }), { target: 'reported_revenue' });
+  check('a different target is carried through', rep.target_label, 'GMV Max reported revenue');
+}
+
+console.log('\n── a missing target is not a zero ──');
+{
+  const rows = Array.from({ length: 30 }, (_, i) => ({ spend: 100 + i * 10, revenue: null }));
+  const f = fitSpendResponse(rows);
+  check('spend without a target refuses explicitly', f.status, 'missing_target');
+  check('and says how many days are affected', f.days_missing_target, 30);
+  check('it does not report a zero return', f.marginal_roas, undefined);
+}
+
+console.log('\n── forward validation: fitting the past is not predicting it ──');
+{
+  const f = fitSpendResponse(synth({ b: 0.6, noise: 0.02, n: 60 }));
+  check('validation runs when there is enough history', !!f.validation, true);
+  check('it uses forward folds, never a random split', f.validation.folds >= 5, true);
+  check('a clean signal beats the naive baseline', f.validation.beats_baseline, true);
+  check('skill is reported as a fraction of the baseline error removed',
+    f.validation.skill > 0 && f.validation.skill <= 1, true);
+
+  // Pure noise: a curve can still be fitted, and it must not be trusted.
+  const noise = Array.from({ length: 40 }, (_, i) => ({
+    spend: 100 + ((i * 37) % 250),
+    revenue: 500 + ((i * 91) % 400),
+  }));
+  const n = fitSpendResponse(noise);
+  check('noise does not produce an actionable answer', n.status === 'ok', false);
 }
 
 console.log('\n── OLS itself ──');
