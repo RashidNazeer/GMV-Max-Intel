@@ -30,7 +30,7 @@ const ALL_COLUMNS = [
   { key: 'orders',   label: 'Orders',       required: true },
   { key: 'trend',    label: '7-day trend',  required: true },
   { key: 'paid_gmv', label: 'Ad-driven' },
-  { key: 'share',    label: 'Ad share' },
+  { key: 'share',    label: 'Affiliate ad share' },
   { key: 'age',      label: 'Age' },
   { key: 'views',    label: 'Lifetime views' },
 ];
@@ -95,7 +95,7 @@ export default function CreativeTable({
                 <th>Status</th>
                 <SortHeader label="GMV" field="gmv" sort={sort} dir={dir} onSort={onSort} num />
                 {show('paid_gmv') && <SortHeader label="Ad-driven" field="paid_gmv" sort={sort} dir={dir} onSort={onSort} num />}
-                {show('share') && <th>Ad share</th>}
+                {show('share') && <th>Affiliate ad share</th>}
                 <SortHeader label="Orders" field="orders" sort={sort} dir={dir} onSort={onSort} num />
                 <SortHeader label="7-day trend" field="trend" sort={sort} dir={dir} onSort={onSort} num
                   hint="The last 7 complete days against the 7 before, anchored to the reporting cutoff. This comparison is retrieved in full whatever the report length — a 7-day report no longer shortens it." />

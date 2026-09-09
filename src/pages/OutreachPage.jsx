@@ -14,10 +14,11 @@
 // one that was here before: the five numbered steps are Panels, the two lists
 // are `table.data` with a sticky identity column, and the warnings are Notices
 // so a sentence renders as a sentence instead of as spaced fragments.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { creatorGrowth, allCreatorGrowth, productCatalog, outreach, outreachLog } from '../lib/api.js';
+import { addDays } from '../lib/window.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
   Panel, PageHeader, Notice, Skeleton, EmptyState, money, pct,
@@ -25,6 +26,19 @@ import {
 
 const MAX_MESSAGE = 500;
 const MAX_NAME = 30;
+
+/** The creator shortlist is ALWAYS a fixed 30-day pair. It is not the reporting
+ *  window, and the report-length buttons do not move it — only the end date
+ *  does. `shop_creator_growth` takes p_window_days = 30 and p_end = scope.end,
+ *  so these are the two windows it actually compares. */
+const TARGETING_DAYS = 30;
+const targetingBasis = (end) => ({
+  recentStart: addDays(end, -(TARGETING_DAYS - 1)),
+  recentEnd: end,
+  priorStart: addDays(end, -(TARGETING_DAYS * 2 - 1)),
+  priorEnd: addDays(end, -TARGETING_DAYS),
+});
+const shortRange = (a, b) => `${a.slice(5)} → ${b.slice(5)}`;
 
 /** `dry_run` is a wire value, not a label. Sentence case, once, for both uses. */
 const actionLabel = (a) => String(a || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
@@ -35,6 +49,7 @@ export default function OutreachPage() {
   const cur = shop.currency || 'USD';
 
   // ── the shortlist ─────────────────────────────────────────────────────────
+  const basis = targetingBasis(end);
   const [growth, setGrowth] = useState(2);
   const [organicOnly, setOrganicOnly] = useState(false);
   const [allShops, setAllShops] = useState(false);
@@ -55,6 +70,18 @@ export default function OutreachPage() {
     queryFn: () => productCatalog(shop.id),
   });
   const logQ = useQuery({ queryKey: ['outreachlog', shop.id], queryFn: () => outreachLog(shop.id) });
+
+  /** Titles that appear more than once in the catalogue, so those rows can show
+      the product id that distinguishes them. Computed over the whole catalogue,
+      not the rendered page, or a duplicate split across a scroll looks unique. */
+  const dupTitles = useMemo(() => {
+    const seen = new Map();
+    for (const p of productsQ.data || []) {
+      const t = p.title || p.product_id;
+      seen.set(t, (seen.get(t) || 0) + 1);
+    }
+    return new Set([...seen].filter(([, n]) => n > 1).map(([t]) => t));
+  }, [productsQ.data]);
 
   const candidates = useMemo(() => {
     const rows = growthQ.data || [];
@@ -93,6 +120,31 @@ export default function OutreachPage() {
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
   const [created, setCreated] = useState(null);
+
+  // ── A DRAFT DOES NOT FOLLOW YOU TO ANOTHER SHOP ───────────────────────────
+  // `chosenProducts` is keyed by product_id and `picked` by creator handle, and
+  // both belong to the shop they were chosen in. An invitation for Biostime
+  // built out of Cutler's product ids is the kind of mistake that is only found
+  // after it has been sent.
+  //
+  // Today that cannot happen, but NOT because of anything on this page: Shell
+  // keys the outlet wrapper by shop id, so switching shops unmounts this
+  // component and every selection dies with it. That key exists for an
+  // unrelated reason — stopping one shop's figures being shown under another's
+  // name — and if it is ever removed this page would silently start carrying
+  // products across. So the invariant is enforced here as well, where it
+  // belongs, rather than left resting on a detail of the shell. Browser QA
+  // confirms the clearing; this effect is the guard for the day the key goes.
+  const draftShop = useRef(shop.id);
+  useEffect(() => {
+    if (draftShop.current === shop.id) return;
+    draftShop.current = shop.id;
+    setChosenProducts({});
+    setPicked(null);
+    setPasted('');
+    setCreated(null);
+    setResult(null);
+  }, [shop.id]);
   // One key per composed automation, so a double-click cannot make two.
   const idempotencyKey = useMemo(
     () => `${shop.id}:${name}:${selected.length}:${products.map((p) => p.product_id).join('-')}`,
@@ -172,6 +224,15 @@ export default function OutreachPage() {
           deliberate action. Validate first: a dry run asks Reacher to check the whole thing and save
           nothing. Every action here is recorded against your name.
         </p>
+        {/* Said BEFORE the switch rather than after it. A notice that appears
+            once the work is already gone explains a loss; this prevents one.
+            The draft cannot cross shops — see the guard above — so the only
+            thing left to get right is that nobody is surprised by it. */}
+        <p>
+          Everything you build here belongs to <strong>{shop.shop_name}</strong>. Creators and products are
+          that shop's, so changing shop in the header <strong>clears the selected creators and products</strong>.
+          Finish or send an invitation before switching.
+        </p>
       </Notice>
 
       {/* ── 1. who ────────────────────────────────────────────────────────── */}
@@ -212,6 +273,19 @@ export default function OutreachPage() {
             </label>
           </div>
 
+          {/* The date control in the header says "Last N days". This list does
+              not use N. It is a fixed 30-vs-30 comparison anchored to the end
+              date, so switching the report from 7 days to 60 changes every
+              other page and leaves this shortlist identical. Saying so here is
+              cheaper than letting someone discover it by not noticing. */}
+          <p className="meta" style={{ margin: '10px 0 0', maxWidth: '78ch' }}>
+            <strong>Targeting basis:</strong> {basis.recentStart} → {basis.recentEnd} against{' '}
+            {basis.priorStart} → {basis.priorEnd} — a fixed {TARGETING_DAYS}-day pair anchored to the
+            report <em>end</em> date. The report length in the toolbar
+            {scope.custom ? '' : ` (currently ${scope.days} days)`} does not change this list; only moving
+            the end date does.
+          </p>
+
           {/* An automation belongs to one shop. Inviting someone who grew for a
               different shop is legitimate, but it is a colder ask than inviting
               someone already selling this brand — worth saying before they send. */}
@@ -230,18 +304,36 @@ export default function OutreachPage() {
           <div className="panel-body" style={{ paddingTop: 0 }}><Skeleton h={200} /></div>
         ) : !candidates.length ? (
           <EmptyState title="No creators match this filter">
-            No creator grew at least {growth}× in the last 30 days under these settings. Lower the growth
+            No creator grew at least {growth}× between {basis.priorStart} → {basis.priorEnd} and {basis.recentStart} → {basis.recentEnd} under these settings. Lower the growth
             multiple, or paste handles from a sheet below.
           </EmptyState>
         ) : (
           <div className="tablewrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
-            <table className="data">
+            <table className="data fixed">
+              <colgroup>
+                <col />
+                {allShops && <col style={{ width: 160 }} />}
+                <col style={{ width: 118 }} />
+                <col style={{ width: 118 }} />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 108 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th className="sticky-l">Creator</th>
                   {allShops && <th>Grew for</th>}
-                  <th className="num">Last 30d</th>
-                  <th className="num">Prior 30d</th>
+                  {/* The dates are in the header, not only in the sentence
+                      above, because this is the column someone sorts and
+                      screenshots. "Last 30d" alone does not say last 30 days
+                      of WHAT — and it is not the reporting window. */}
+                  <th className="num" title={`${basis.recentStart} → ${basis.recentEnd}`}>
+                    Last 30d
+                    <span className="meta" style={{ display: 'block', fontWeight: 400 }}>{shortRange(basis.recentStart, basis.recentEnd)}</span>
+                  </th>
+                  <th className="num" title={`${basis.priorStart} → ${basis.priorEnd}`}>
+                    Prior 30d
+                    <span className="meta" style={{ display: 'block', fontWeight: 400 }}>{shortRange(basis.priorStart, basis.priorEnd)}</span>
+                  </th>
                   <th className="num">Growth</th>
                   <th className="num">Ad-driven</th>
                 </tr>
@@ -367,7 +459,15 @@ export default function OutreachPage() {
           </EmptyState>
         ) : (
           <div className="tablewrap" style={{ maxHeight: 260, overflowY: 'auto' }}>
-            <table className="data">
+            {/* Fixed layout, declared widths. The commission input is the whole
+                point of this table and it was being pushed off the right edge by
+                whichever product happened to have the longest title. */}
+            <table className="data fixed">
+              <colgroup>
+                <col />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 148 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th className="sticky-l">Product</th>
@@ -378,23 +478,39 @@ export default function OutreachPage() {
               <tbody>
                 {(productsQ.data || []).map((p) => {
                   const on = p.product_id in chosenProducts;
+                  const label = p.title || p.product_id;
                   return (
                     <tr key={p.product_id}>
                       <td className="sticky-l">
-                        <label className="row" style={{ flexWrap: 'nowrap', gap: 8 }}>
+                        <label className="row" style={{ flexWrap: 'nowrap', gap: 8 }} title={label}>
                           <input type="checkbox" checked={on} onChange={() => setChosenProducts((prev) => {
                             const next = { ...prev };
                             if (on) delete next[p.product_id]; else next[p.product_id] = 20;
                             return next;
                           })} />
-                          <span className="truncate">{p.title || p.product_id}</span>
+                          <span style={{ minWidth: 0 }}>
+                            {/* TWO LINES, not one truncated line. The column has
+                                a declared width now, so a long name can wrap
+                                without moving the price or the commission input
+                                — and two lines of a product name is usually the
+                                whole distinguishing part of it. */}
+                            <span className="clamp2">{label}</span>
+                            {/* Two catalogue rows can carry the SAME title and be
+                                different products. Ticking one of a pair of
+                                identical-looking lines is a coin flip, so the
+                                duplicates — and only the duplicates — show the id
+                                that tells them apart. */}
+                            {dupTitles.has(label) && (
+                              <span className="meta mono">{p.product_id}</span>
+                            )}
+                          </span>
                         </label>
                       </td>
                       <td className="num muted">{p.min_price == null ? '—' : money(p.min_price, cur)}</td>
                       <td>
                         {on && (
                           <input className="input" type="number" min="0" max="90" step="0.5"
-                            aria-label={`Commission for ${p.title || p.product_id}`}
+                            aria-label={`Commission for ${label}`}
                             style={{ width: 96 }}
                             value={chosenProducts[p.product_id]}
                             onChange={(e) => setChosenProducts((prev) => ({ ...prev, [p.product_id]: e.target.value }))} />

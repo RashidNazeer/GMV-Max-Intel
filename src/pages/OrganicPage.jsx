@@ -141,13 +141,22 @@ export default function OrganicPage() {
         : deltaLabel(nowCre.data?.creators, priorCre.data?.creators),
       hint: 'Distinct creators producing revenue in this window. Breadth, not depth.',
     },
+    // NOT "inside the window". `shop_creative_health` counts a video as new
+    // when its FIRST EVER sale falls in `first_sale_day > p_end - 7` — a fixed
+    // seven days ending on the report end date, whatever length the report is.
+    // The old label and hint both said "inside the window", so on a 30-day
+    // report this number was read as a 30-day count and was not one. The
+    // comparison is sound (seven days against the seven ending on the prior
+    // period) — it is the claim about which seven that was wrong.
     {
       label: 'New videos selling',
       value: newVideos == null ? '—' : newVideos.toLocaleString(),
       context: newVideos == null
         ? 'not reported for this window'
-        : deltaLabel(nowCre.data?.new_videos, priorCre.data?.new_videos),
-      hint: 'Videos that made their first sale inside the window — the pipeline behind future organic revenue.',
+        : `${deltaLabel(nowCre.data?.new_videos, priorCre.data?.new_videos)} · last 7 days`,
+      hint: `Videos whose FIRST EVER sale landed in the seven days ending ${scope.end}`
+        + `${scope.spanDays === 7 ? '' : ` — a fixed seven days, not the ${scope.spanDays}-day report`}. `
+        + `Compared against the seven days ending ${scope.priorEnd}. The pipeline behind future organic revenue.`,
     },
   ];
 

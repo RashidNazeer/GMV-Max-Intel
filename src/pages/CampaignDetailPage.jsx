@@ -26,6 +26,7 @@ import {
 } from '../lib/api.js';
 import { useFacts } from '../lib/facts.js';
 import { scopedTo } from '../lib/scope.js';
+import { addDays } from '../lib/window.js';
 import { RecommendationDrawer } from '../components/Decisions.jsx';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
@@ -276,15 +277,32 @@ function TabRow({ tabs, value, onChange }) {
 
 function Performance({ facts, cur, scope }) {
   const rows = (facts.spendRows || []).filter((d) => d.day >= scope.start && d.day <= scope.end);
-  const data = rows.map((d) => ({
-    day: String(d.day).slice(5),
-    Spend: Number(d.spend) || 0,
-    'Total shop GMV': d.total_shop_gmv == null ? null : Number(d.total_shop_gmv),
-    'GMV Max claims': Number(d.reported_revenue) || 0,
-    'Verified ad-driven': Number(d.measured_paid_gmv) || 0,
-  }));
 
-  if (!data.length) {
+  // THE CHART IS DRAWN OVER THE REPORT WINDOW, NOT OVER WHAT ARRIVED.
+  //
+  // `shop_spend_daily` returns a row per day it HAS. Plotting those rows alone
+  // made the axis stop at the last day collected — a report ending 09-07 drew a
+  // chart ending 09-05, and nothing on screen said the last two days were
+  // missing rather than flat. So the day list comes from the window, every day
+  // is present, and a day with no row keeps nulls: a gap in the line and no bar,
+  // which is the honest rendering of "not collected".
+  const byDay = new Map(rows.map((d) => [String(d.day), d]));
+  const days = [];
+  for (let iso = scope.start; iso <= scope.end; iso = addDays(iso, 1)) days.push(iso);
+  const absent = days.filter((iso) => !byDay.has(iso));
+
+  const data = days.map((iso) => {
+    const d = byDay.get(iso);
+    return {
+      day: iso.slice(5),
+      Spend: d ? Number(d.spend) || 0 : null,
+      'Total shop GMV': !d || d.total_shop_gmv == null ? null : Number(d.total_shop_gmv),
+      'GMV Max claims': d ? Number(d.reported_revenue) || 0 : null,
+      'Verified ad-driven': d ? Number(d.measured_paid_gmv) || 0 : null,
+    };
+  });
+
+  if (!rows.length) {
     return (
       <Panel>
         <EmptyState title="No spend recorded in this window">
@@ -326,6 +344,16 @@ function Performance({ facts, cur, scope }) {
       </div>
       <p className="meta" style={{ margin: '8px 0 0' }}>
         A break in the green line is a day with no shop channel data — unavailable, not zero.
+        {absent.length > 0 && (
+          <> {' '}
+            <strong>
+              {absent.length} of these {days.length} day{days.length === 1 ? '' : 's'} have no ad
+              record at all
+            </strong>{' '}
+            ({absent.length <= 4 ? absent.join(', ') : `${absent[0]} … ${absent[absent.length - 1]}`}).
+            The axis still runs to {scope.end} so the gap is visible; those days are blank rather than zero.
+          </>
+        )}
       </p>
     </Panel>
   );
@@ -482,8 +510,13 @@ function ScenarioTable({ fit, cur }) {
             {rows.map((s) => (
               <tr key={s.delta}>
                 <td className="sticky-l">
+                  {/* NOT "Current". The baseline is the model's mean daily
+                      spend over its TRAINING window — $328/day across 29
+                      observed days — while the selected report showed $1,267
+                      across 5 days. Calling the historical average "Current"
+                      presented it as recent delivery, which it is not. */}
                   {s.is_baseline
-                    ? <strong>Current</strong>
+                    ? <strong>Model baseline</strong>
                     : <strong>{s.delta > 0 ? '+' : ''}{(s.delta * 100).toFixed(0)}% spend</strong>}
                   {s.outside_observed && !s.is_baseline && (
                     <span className="status status-warn" style={{ marginLeft: 'var(--s2)' }}
@@ -521,11 +554,17 @@ function ScenarioTable({ fit, cur }) {
         <details>
           <summary style={{ cursor: 'pointer' }}>How to read these scenarios</summary>
           <p className="meta" style={{ margin: '8px 0 0' }}>
-            Every row projects over the same <strong>{fit.horizon_days}-day horizon</strong> under the same
-            stated context. Marginal ROAS is a finite difference — the predicted GMV difference divided by the
-            spend difference — not average ROAS reapplied. These are <strong>spend</strong> scenarios: the
-            budget column exists only because utilisation was observable, and it is an assumption rather than
-            a measurement.
+            <strong>Model baseline</strong> is the mean daily spend across the{' '}
+            <strong>{fit.days} days the model actually observed</strong>, inside a requested training window
+            of {scope.model.spanDays} days. That is deliberately NOT the selected report: this report covers{' '}
+            {scope.start} → {scope.end}. A historical average and recent delivery are different quantities,
+            and the row is labelled for the one it is.
+            {' '}Every row projects over the same <strong>{fit.horizon_days}-day horizon</strong> under the
+            same stated context. Marginal ROAS is a finite difference — the predicted GMV difference divided
+            by the spend difference — not average ROAS reapplied.
+            {' '}These are <strong>spend</strong> scenarios. A modelled +10% spend is not evidence that
+            raising the budget 10% will produce that spend: the budget column exists only because
+            utilisation was observable, and it is an assumption rather than a measurement.
             {fit.time_confounded && (
               <> <strong>Caution:</strong> spend and the calendar move together here (correlation{' '}
                 {fit.spend_time_correlation.toFixed(2)}), so part of what looks like a spend effect may be a

@@ -15,6 +15,7 @@ import { useOutletContext, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listRecommendations, persistRecommendation, shopSpendDaily, listCampaigns, shopSourceHealth,
+  shopAttribution, shopPaidRoas,
   money, pct, fixed, numOrNull,
 } from '../lib/api.js';
 import { useFacts } from '../lib/facts.js';
@@ -24,7 +25,7 @@ import PerformanceChart from '../components/PerformanceChart.jsx';
 import CompletenessNotice from '../components/CompletenessNotice.jsx';
 import { PriorityStrip, RecommendationDrawer } from '../components/Decisions.jsx';
 import {
-  Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint,
+  Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint, Delta,
 } from '../components/ui.jsx';
 
 export default function OverviewPage() {
@@ -48,6 +49,20 @@ export default function OverviewPage() {
   const spendQ = useQuery({
     queryKey: ['spendd', shop.id, scope.start, scope.end],
     queryFn: () => shopSpendDaily(shop.id, scope.start, scope.end),
+  });
+
+  // THE PRIOR PERIOD. Adjacent, equal length, no overlap — the same pair the
+  // Organic momentum score already compares against, so the two pages cannot
+  // disagree about what "previous period" means. These keys deliberately match
+  // the shapes useFacts registers, so switching the report length reuses the
+  // cache rather than refetching what the app already holds.
+  const priorAttrQ = useQuery({
+    queryKey: ['attr', shop.id, scope.priorStart, scope.priorEnd],
+    queryFn: () => shopAttribution(shop.id, scope.priorStart, scope.priorEnd),
+  });
+  const priorRoasQ = useQuery({
+    queryKey: ['roas', shop.id, scope.priorStart, scope.priorEnd],
+    queryFn: () => shopPaidRoas(shop.id, scope.priorStart, scope.priorEnd),
   });
 
   useEffect(() => {
@@ -91,21 +106,58 @@ export default function OverviewPage() {
   const util = facts.dailyBudget && mg?.mean_daily_spend != null
     ? mg.mean_daily_spend / facts.dailyBudget : null;
 
+  // ── COMPARISON DELTAS ─────────────────────────────────────────────────────
+  // Every headline number now says which way it moved against the adjacent
+  // equal-length period. The guard matters more than the arithmetic: a prior
+  // window that was collected for FEWER DAYS than this one produces a total
+  // that is smaller for a reason that has nothing to do with the shop, and a
+  // delta computed from it would read as a decline. Where coverage is short,
+  // the shortfall is named and no percentage is printed.
+  const pa = priorAttrQ.data;
+  const pr = priorRoasQ.data;
+  const comparing = priorAttrQ.isLoading || priorRoasQ.isLoading;
+  const nowDays = Number(a?.days_covered) || 0;
+  const priorDays = Number(pa?.days_covered) || 0;
+  const shortCover = !comparing && nowDays > 0 && priorDays < nowDays;
+  // Two different absences, two different sentences. "covers 0 of 7 days" reads
+  // as a coverage shortfall in data that exists; nothing was stored at all.
+  const shortNote = (
+    <span className="delta delta-none">
+      {priorDays === 0
+        ? `nothing stored for ${scope.priorStart} → ${scope.priorEnd}`
+        : `prior period covers ${priorDays} of ${nowDays} days — not comparable`}
+    </span>
+  );
+  // MM-DD, not the full ISO pair. A metric card is about 250px wide at 1440 and
+  // "vs 2026-08-05 → 2026-08-11" wraps to a second line inside every one of
+  // them, pushing the priority strip out of the first screenful. The year is
+  // already on the page header and the full dates are in each metric's hint.
+  const priorLabel = `vs ${scope.priorStart.slice(5)} → ${scope.priorEnd.slice(5)}`;
+  const delta = (current, prior, dir) => (shortCover ? shortNote : (
+    <Delta current={current} prior={prior} dir={dir} loading={comparing} label={priorLabel} />
+  ));
+
   const metrics = [
     {
       label: 'Shop GMV', value: money(a?.total_gmv, cur), source: 'measured',
+      delta: delta(a?.total_gmv, pa?.total_gmv, 'up-good'),
       context: `${Number(a?.orders || 0).toLocaleString()} orders · ${a?.days_covered || 0} days`,
-      hint: `Total TikTok Shop GMV from Seller Center for ${scope.start} to ${scope.end}, in the shop's reporting timezone.`,
+      hint: `Total TikTok Shop GMV from Seller Center for ${scope.start} to ${scope.end}, in the shop's reporting timezone. `
+        + `The change is measured against ${scope.priorStart} → ${scope.priorEnd} — adjacent, equal length, no overlap.`,
     },
     {
       label: 'Ad spend', value: r ? money(numOrNull(r.spend), cur) : '—',
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
+      // 'neutral': spending more is neither good nor bad on its own, and
+      // colouring it would be a recommendation this strip does not make.
+      delta: r ? delta(r.spend, pr?.spend, 'neutral') : null,
       context: r ? `${r.days_with_spend} days with spend` : 'ad account not connected',
-      hint: 'GMV Max spend. A dash means no spend data exists, which is different from spend being zero.',
+      hint: 'GMV Max spend. A dash means no spend data exists, which is different from spend being zero. The change is not coloured — more spend is not itself better or worse.',
     },
     {
       label: 'GMV Max ROI', value: r ? fixed(r.reported_roi) : '—',
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
+      delta: r ? delta(r.reported_roi, pr?.reported_roi, 'up-good') : null,
       context: r ? `on ${money(r.reported_revenue, cur)} claimed` : 'no campaigns',
       hint: "GMV Max's own reported return: the revenue it attributes to itself, divided by spend. The ceiling of the band.",
     },
@@ -113,15 +165,36 @@ export default function OverviewPage() {
       // PROTECTED WORDING — unchanged in meaning and certainty.
       label: 'Proven return', value: r ? fixed(r.verified_roas) : '—',
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
+      delta: r ? delta(r.verified_roas, pr?.verified_roas, 'up-good') : null,
       context: r ? `${money(r.verified_paid_gmv, cur)} carries Shop Ads commission` : '—',
       hint: 'Revenue whose commission proves the ads drove it, divided by ALL spend. Every dollar in it is certainly ad-driven, so this is the floor of the band — the real return is between it and GMV Max’s own figure.',
     },
+    // THIS RATIO MIXES TWO PERIODS, AND NOW SAYS SO.
+    //
+    // The numerator is the spend model's mean daily spend — an average over the
+    // days it actually observed inside its training window, which is longer than
+    // the report and ends at the same cutoff. The denominator is the daily
+    // budget set on enabled campaigns RIGHT NOW. Neither figure is the selected
+    // report, so labelling this "delivered spend against budget" implied a
+    // recency the numerator does not have. It is a training-period proxy, and a
+    // reader deciding whether to raise a budget needs to know that before they
+    // act on it. Same baseline the campaign scenario table calls Model baseline.
     {
       label: 'Budget utilisation', value: util == null ? '—' : pct(util, 0),
-      context: facts.dailyBudget
-        ? `${money(mg?.mean_daily_spend, cur)} of ${money(facts.dailyBudget, cur)}/day`
-        : 'no budget on file',
-      hint: 'Delivered daily spend as a share of the daily budget on enabled campaigns. A campaign well under its budget is not budget-constrained, so raising the budget will not raise delivery.',
+      // Deliberately NO period delta. Every other metric on this strip is a
+      // report-window measurement with a prior-window twin; this one is not,
+      // and inventing a comparison for it would hide exactly the mismatch the
+      // context line is there to disclose.
+      delta: <span className="delta delta-none">model baseline — not a report-window figure</span>,
+      context: !facts.dailyBudget
+        ? 'no budget on file'
+        : `${money(mg?.mean_daily_spend, cur)}/day over ${mg?.days ?? '—'} observed days`
+          + ` vs ${money(facts.dailyBudget, cur)}/day set now`,
+      hint: 'A share, not a measurement of this report. The numerator is the model baseline — mean daily spend across the '
+        + `${mg?.days ?? 'observed'} days the spend model actually saw between ${scope.model.start} and ${scope.model.end}`
+        + ` — and the denominator is the daily budget currently set on enabled campaigns. It is the same baseline the campaign`
+        + ' scenario table labels Model baseline, deliberately, so the two agree. A campaign well under its budget is not'
+        + ' budget-constrained, so raising the budget will not raise delivery.',
     },
   ];
 

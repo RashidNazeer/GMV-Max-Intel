@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import { useOutletContext, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { shopProducts, shopProductStats, money, moneyExact, pct } from '../lib/api.js';
+import { shopProducts, shopProductStats, shopAttribution, money, moneyExact, pct } from '../lib/api.js';
 import { useLocalParams, scopedTo } from '../lib/scope.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
@@ -39,7 +39,7 @@ const ALL_COLUMNS = [
   { key: 'ctr',        label: 'CTR' },
   { key: 'conversion', label: 'Conversion', required: true },
   { key: 'refunds',    label: 'Refunds' },
-  { key: 'share',      label: 'Ad share' },
+  { key: 'share',      label: 'Affiliate ad share' },
   { key: 'price',      label: 'Price' },
   { key: 'stock',      label: 'Stock' },
 ];
@@ -65,6 +65,14 @@ export default function ProductsPage() {
   const statsQ = useQuery({
     queryKey: ['pstats', shop.id, scope.start, scope.end],
     queryFn: () => shopProductStats(shop.id, scope.start, scope.end),
+  });
+
+  // The whole-shop total, purely so this page can say what share of it the
+  // product rows below actually account for. Same key shape as everywhere else,
+  // so it is one cached read rather than a second request.
+  const shopQ = useQuery({
+    queryKey: ['attr', shop.id, scope.start, scope.end],
+    queryFn: () => shopAttribution(shop.id, scope.start, scope.end),
   });
 
   const listQ = useQuery({
@@ -179,6 +187,29 @@ export default function ProductsPage() {
           ? <MetricSummary items={metrics} source="measured" />
           : null}
 
+      {/* COVERAGE, stated where the totals are read.
+          The product rows sum to less than Shop GMV, and until now this page
+          simply presented its own total as though it were the shop's. It is a
+          different population — a sale with no product row in the funnel feed
+          is in Shop GMV and not here — so the gap is named rather than left for
+          someone to discover by subtracting two screens from each other. */}
+      {(() => {
+        const pg = Number(s?.gmv);
+        const sg = Number(shopQ.data?.total_gmv);
+        if (!Number.isFinite(pg) || !Number.isFinite(sg) || sg <= 0) return null;
+        const share = pg / sg;
+        if (share >= 0.995) return null;
+        return (
+          <p className="meta" style={{ margin: '8px 0 0', maxWidth: '82ch' }}>
+            These products account for <strong>{money(pg, cur)}</strong> of the{' '}
+            <strong>{money(sg, cur)}</strong> Shop GMV in this window — <strong>{pct(share, 0)}</strong>.
+            The remaining {money(Math.max(0, sg - pg), cur)} is shop revenue with no product row in the
+            funnel feed for these dates, so it is absent from every total on this page rather than
+            distributed across the rows.
+          </p>
+        );
+      })()}
+
       {s?.products_affiliate_only > 0 && (
         <Notice tone="info">
           <strong>{Number(s.products_affiliate_only)}</strong> product(s) had affiliate orders in this
@@ -238,7 +269,7 @@ export default function ProductsPage() {
                   )}
                   {show('share') && (
                     <th>
-                      Ad share
+                      Affiliate ad share
                       <Hint text="The portion of this product's AFFILIATE revenue that carried a Shop Ads commission — measured per product, never apportioned from a shop-wide rate. A dash means no affiliate orders, which is not zero ad-driven revenue." />
                     </th>
                   )}

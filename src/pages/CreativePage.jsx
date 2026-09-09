@@ -74,7 +74,7 @@ export default function CreativePage() {
       tone: 'pos',
       context: h.trend_measurable === false
         ? 'needs a 14-day window'
-        : `${h.rising_videos} up more than 30% · ${h.new_videos} new`,
+        : `${h.rising_videos} up more than 30% · ${h.new_videos} first sold in the last 7 days`,
     },
   ];
 

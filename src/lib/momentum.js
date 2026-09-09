@@ -99,7 +99,8 @@ export function momentum(now = {}, prior = {}) {
   push('creators', 'Creators earning', c?.creators, pc?.creators,
     'Distinct creators producing revenue. Breadth, not depth.');
   push('new_videos', 'New videos selling', c?.new_videos, pc?.new_videos,
-    'Videos that made their first sale inside the window.');
+    'Videos whose first ever sale landed in the seven days ending on each period’s last day. '
+    + 'A fixed seven-day count on both sides, not the report length.');
   push('new_winners', 'New winners', c?.winners, pc?.winners,
     'Videos clearing the winner threshold.');
 

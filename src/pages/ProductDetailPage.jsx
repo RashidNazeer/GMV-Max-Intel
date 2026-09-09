@@ -162,7 +162,7 @@ export default function ProductDetailPage() {
       context: rate(p.refund_rate, 1),
     },
     {
-      label: 'Ad share',
+      label: 'Affiliate ad share',
       value: p.paid_share == null ? '—' : pct(p.paid_share, 0),
       context: p.paid_share == null ? 'no affiliate orders' : `${money(p.measured_paid_gmv, cur)} ad-driven`,
       hint: "The portion of this product's AFFILIATE revenue that carried a Shop Ads commission — measured per product, never apportioned from a shop-wide rate.",

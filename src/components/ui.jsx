@@ -76,10 +76,43 @@ export function MetricSummary({ items, source, loading }) {
             {m.source && m.source !== source && <SourceTag kind={m.source} />}
           </div>
           <div className={`value ${m.tone || ''}`}>{m.value ?? '—'}</div>
+          {m.delta}
           {m.context && <div className="ctx truncate" title={m.context}>{m.context}</div>}
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * A period-over-period change, with an explicit reason whenever there isn't one.
+ *
+ * The rule that makes this trustworthy: an ABSENT baseline is not a 0% change,
+ * and a baseline of zero is not a 100% rise. Both print a reason instead of a
+ * number, because a reader cannot tell an invented delta from a real one.
+ *
+ * `dir` says which way is good. Ad spend is 'neutral' — spending more is not
+ * itself better or worse, and colouring it green would be a recommendation this
+ * component is not entitled to make.
+ */
+export function Delta({ current, prior, dir = 'up-good', label = 'vs prior period', loading }) {
+  if (loading) return <span className="delta delta-none">comparing…</span>;
+  const c = Number(current);
+  const p = Number(prior);
+  if (!Number.isFinite(c) || !Number.isFinite(p)) {
+    return <span className="delta delta-none">no prior period to compare</span>;
+  }
+  if (p === 0) {
+    return <span className="delta delta-none">prior period was zero — no percentage</span>;
+  }
+  const d = (c - p) / p;
+  const flat = Math.abs(d) < 0.005;
+  const tone = flat || dir === 'neutral' ? '' : ((d > 0) === (dir === 'up-good') ? 'pos' : 'neg');
+  return (
+    <span className={`delta ${tone}`}>
+      {flat ? '±' : d > 0 ? '▲' : '▼'} {d > 0 && !flat ? '+' : ''}{(d * 100).toFixed(0)}%{' '}
+      <span className="muted">{label}</span>
+    </span>
   );
 }
 

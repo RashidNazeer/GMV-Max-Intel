@@ -348,6 +348,42 @@ await page.waitForTimeout(4500);
 const thumbs = await page.locator(SEL.thumb).count();
 check('product thumbnails render', thumbs > 0, `${thumbs} found`);
 
+// PRODUCT TOTALS ARE NOT SHOP TOTALS. A sale with no product row in the funnel
+// feed is in Shop GMV and absent from every figure on this page, and this page
+// used to present its own total as though it were the shop's. The sentence is
+// required only when the two actually differ, so the check reads the numbers
+// off the page and asserts the disclosure exactly when it is owed.
+const prodCoverage = await page.evaluate(() => {
+  const t = document.body.innerText;
+  return {
+    stated: /These products account for .* of the .* Shop GMV in this window/i.test(t),
+    share: (t.match(/Shop GMV in this window\s*—\s*(\d+)%/i) || [])[1] || null,
+  };
+});
+// Either the page says the products cover everything (no sentence, no gap) or it
+// names the gap. What it must never do is show a partial total unqualified.
+check('products state what share of Shop GMV they account for, when it is not all of it',
+  prodCoverage.stated || prodCoverage.share === null,
+  `coverage sentence missing (share read as ${prodCoverage.share})`);
+if (prodCoverage.stated) console.log(`  products cover ${prodCoverage.share}% of Shop GMV — stated on the page`);
+
+// Long product names must WRAP, not truncate to a single ellipsis, and must not
+// widen the column that carries the price and commission controls.
+await page.goto(`${BASE}/outreach`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+const wrapCheck = await page.evaluate(() => {
+  const cells = [...document.querySelectorAll('.clamp2')];
+  if (!cells.length) return null;
+  const tall = cells.filter((c) => c.getBoundingClientRect().height > 20).length;
+  const overflowing = cells.filter((c) => c.scrollWidth - c.clientWidth > 1).length;
+  return { total: cells.length, tall, overflowing };
+});
+check('long product names wrap to two lines instead of overflowing their column',
+  !wrapCheck || wrapCheck.overflowing === 0,
+  wrapCheck ? `${wrapCheck.overflowing} of ${wrapCheck.total} names overflow horizontally` : 'no clamped cells');
+await page.goto(`${BASE}/products`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+
 const prodLink = page.locator(SEL.rowLink).first();
 if (await prodLink.count()) {
   await prodLink.click();
@@ -536,7 +572,165 @@ await waitForData(page);
 const outreachText = await page.evaluate(() => document.body.innerText);
 check('outreach still loads with its existing workflow', outreachText.length > 400);
 await page.screenshot({ path: path.join(OUT, 'outreach--loaded.png') });
+
+// THE TABLE THAT DID NOT FIT. Measured at 1,607px inside a 1,075px container,
+// which put the commission input — the only control that matters on that panel
+// — off the right-hand edge. Fixed layout plus declared column widths. This
+// asserts the fit itself, not the CSS, because the CSS is not the claim.
+const wide = await page.evaluate(() => {
+  const out = [];
+  for (const t of document.querySelectorAll('.tablewrap table.data')) {
+    const wrap = t.closest('.tablewrap');
+    const over = t.scrollWidth - wrap.clientWidth;
+    if (over > 1) out.push({ over, w: t.scrollWidth, c: wrap.clientWidth });
+  }
+  return out;
+});
+check('no outreach table is wider than the panel holding it', wide.length === 0,
+  wide.map((w) => `${w.w}px table in ${w.c}px container (+${w.over})`).join(', '));
+
+// The commission control has to be ON SCREEN, not merely present in the DOM.
+const commissionVisible = await page.evaluate(() => {
+  const inp = document.querySelector('input[aria-label^="Commission for"]');
+  if (!inp) return 'none-ticked';        // nothing selected yet — not a failure
+  const r = inp.getBoundingClientRect();
+  return r.left >= 0 && r.right <= window.innerWidth ? 'visible' : 'clipped';
+});
+check('the commission input is inside the viewport when shown',
+  commissionVisible !== 'clipped', 'the control is off the right-hand edge again');
+
+// The shortlist is a fixed 30-vs-30 pair anchored to the report END date. The
+// report-length buttons do not move it, and the page has to say so — otherwise
+// someone switches to 60 days and believes the targeting widened with it.
+check('outreach labels its targeting basis separately from the report control',
+  /targeting basis/i.test(outreachText) && /does not change this list/i.test(outreachText),
+  'no targeting-basis sentence on the page');
+
+// A DRAFT MUST NOT CROSS SHOPS. Ticking a product checkbox contacts nobody —
+// it is local state — so this is inside the "never send" rule. The defect it
+// guards is real: product ids and creator handles belong to the shop they were
+// chosen in, and an invitation built for one shop out of another's catalogue is
+// exactly the kind of thing that is only noticed after it has been sent.
+const outreachShops = await page.locator(SEL.shopSelect).first().locator('option').all();
+if (outreachShops.length > 1) {
+  const box = page.locator('table.data tbody input[type=checkbox]').last();
+  if (await box.count()) {
+    // Count the COMMISSION INPUTS, not the checkboxes. Every creator row is
+    // ticked by default, so a raw checkbox count is dominated by the shortlist
+    // and would compare two shops' creator counts instead of the draft. A
+    // commission input exists only for a product the operator chose.
+    await box.check();
+    const chosenBefore = await page.locator('input[aria-label^="Commission for"]').count();
+    const current = await page.locator(SEL.shopSelect).first().inputValue();
+    const other = (await Promise.all(outreachShops.map((o) => o.getAttribute('value'))))
+      .find((v) => v && v !== current);
+    await page.locator(SEL.shopSelect).first().selectOption(other);
+    await waitForData(page);
+    const text = await page.evaluate(() => document.body.innerText);
+    const chosenAfter = await page.locator('input[aria-label^="Commission for"]').count();
+    check('switching shops clears the product draft rather than carrying it over',
+      chosenBefore === 0 || chosenAfter === 0,
+      `${chosenBefore} product(s) chosen before the switch, ${chosenAfter} after`);
+    // The warning is STANDING, not post-hoc. Shell keys the outlet by shop id,
+    // so this page is remounted by the switch and no message set during it
+    // could survive — which is exactly why the page says what will happen
+    // before the click rather than what happened after it.
+    check('and warns before the switch that selections are shop-specific',
+      /clears the selected creators and products/i.test(text),
+      'no standing warning that a shop change clears the draft');
+    await page.screenshot({ path: path.join(OUT, 'outreach--shop-switch-reset.png') });
+  }
+}
+
 console.log('  (no button on this page was clicked — nothing was created, started or sent)');
+
+// ── the overview metric strip states movement, or why it cannot ────────────
+console.log('\n── overview comparison deltas ──');
+await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector(SEL.metrics, { timeout: 30000 });
+await waitForData(page);
+
+const deltas = await page.evaluate(() => [...document.querySelectorAll('.metric')].map((m) => ({
+  label: m.querySelector('.label')?.innerText.trim() || '',
+  delta: m.querySelector('.delta')?.innerText.trim() || null,
+})));
+check('every headline metric carries a change or a stated reason',
+  deltas.length > 0 && deltas.every((d) => d.delta),
+  deltas.filter((d) => !d.delta).map((d) => d.label).join(', ') || 'no metrics found');
+
+// An absent comparison must never render as 0%. That is the whole point.
+const fakeFlat = deltas.filter((d) => /no prior period|not comparable|was zero/i.test(d.delta || '')
+  && /[▲▼±]/.test(d.delta || ''));
+check('an absent baseline prints a reason, never a percentage', fakeFlat.length === 0,
+  fakeFlat.map((d) => `${d.label}: ${d.delta}`).join(', '));
+
+// Budget utilisation mixes the model's training average with the CURRENT
+// budget. It is the one metric on the strip that is not a report-window
+// measurement, and it has to admit that where it is read.
+const utilCard = deltas.find((d) => /utilisation/i.test(d.label));
+check('budget utilisation discloses that it is a model baseline',
+  !!utilCard && /model baseline/i.test(utilCard.delta || ''),
+  utilCard ? utilCard.delta : 'no utilisation metric on the strip');
+
+// ── the campaign chart runs to the report end, gap and all ─────────────────
+console.log('\n── campaign chart coverage ──');
+await page.goto(`${BASE}/campaigns`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+const detail = page.locator(SEL.rowLink).first();
+if (await detail.count()) {
+  await detail.click();
+  await page.waitForTimeout(3000);
+  await waitForData(page);
+  await page.screenshot({ path: path.join(OUT, 'gate--campaign-chart.png') });
+
+  const chart = await page.evaluate(() => {
+    const ticks = [...document.querySelectorAll('.recharts-xAxis .recharts-cartesian-axis-tick-value')]
+      .map((t) => t.textContent.trim()).filter(Boolean);
+    const note = [...document.querySelectorAll('.meta')]
+      .map((p) => p.innerText).find((t) => /break in the green line/i.test(t)) || '';
+    const scope = document.querySelector('.toolbar button[aria-expanded] .meta')?.innerText || '';
+    return { last: ticks[ticks.length - 1] || '', note, scope };
+  });
+  const endMMDD = (chart.scope.match(/→\s*\d{4}-(\d{2}-\d{2})/) || [])[1] || '';
+  if (endMMDD && chart.last) {
+    // The axis must reach the report end date whether or not data arrived for
+    // it. A chart that simply stops is indistinguishable from a flat one.
+    check(`the campaign chart axis reaches the report end (${endMMDD})`,
+      chart.last === endMMDD, `axis ends at ${chart.last}, report ends ${endMMDD}`);
+  }
+  check('the chart explains breaks in its own line', /unavailable, not zero/i.test(chart.note),
+    chart.note.slice(0, 100) || 'no coverage note under the chart');
+  // Only assert the missing-days sentence when days are actually missing.
+  if (/no ad record at all/i.test(chart.note)) {
+    check('missing days are named, not just implied', /\d{4}-\d{2}-\d{2}/.test(chart.note), chart.note.slice(0, 120));
+  }
+} else {
+  console.log('  (no campaign rows on this shop — skipped)');
+}
+
+// ── "new videos selling" says which seven days it means ────────────────────
+console.log('\n── organic: the new-video count names its own window ──');
+await page.goto(`${BASE}/organic`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector(SEL.metrics, { timeout: 30000 });
+await waitForData(page);
+const organicNew = await page.evaluate(() => {
+  const card = [...document.querySelectorAll('.metric')]
+    .find((m) => /new videos selling/i.test(m.querySelector('.label')?.innerText || ''));
+  if (!card) return null;
+  return {
+    ctx: card.querySelector('.ctx')?.innerText || '',
+    hint: card.querySelector('.hint')?.getAttribute('aria-label') || '',
+  };
+});
+// The SQL counts first sales in a FIXED seven days ending at the report cutoff,
+// whatever the report length. The old label said "inside the window", which on
+// a 30-day report was simply untrue.
+check('the new-video count states its fixed seven-day basis',
+  !!organicNew && /last 7 days/i.test(organicNew.ctx) && /seven days/i.test(organicNew.hint),
+  organicNew ? `${organicNew.ctx} | ${organicNew.hint.slice(0, 80)}` : 'no such metric');
+check('it no longer claims to count the whole report window',
+  !!organicNew && !/first sale inside the window/i.test(organicNew.hint),
+  organicNew?.hint?.slice(0, 120));
 
 // ── console health ──────────────────────────────────────────────────────────
 console.log('\n── the browser console ──');

@@ -41,8 +41,20 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 .muted       { color: var(--text-2); }
 .num         { text-align: right; font-variant-numeric: tabular-nums; }
 .metric-value{ font-size: 24px; line-height: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clamp2      { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* `min-width: 0` is the load-bearing half. A flex item defaults to
+   `min-width: auto`, which means it refuses to shrink below the intrinsic
+   width of its own content — and `white-space: nowrap` makes that intrinsic
+   width the FULL untruncated string. So `.truncate` inside a `.row` did not
+   truncate at all; it widened its parent. That is the same defect already
+   fixed for grids by `.grid > * { min-width: 0 }`. */
+.truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* `overflow-wrap: anywhere` so a single unbroken token — a SKU, a 19-digit
+   product id, a caption with no spaces — breaks instead of widening its
+   column. Without it the clamp holds the height and loses the width. */
+.clamp2      {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
 .mono        { font-family: var(--mono); font-size: 12px; }
 code {
   font-family: var(--mono); font-size: .92em;
@@ -197,6 +209,19 @@ label.field { display: flex; flex-direction: column; gap: var(--s1); font-size: 
 .metric .value.pos { color: var(--positive); }
 .metric .value.neg { color: var(--error); }
 
+/* A period-over-period change sits between the value and its context, so the
+   number is read with its movement rather than as a standalone fact. */
+.delta { font-size: 12px; line-height: 18px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.delta.pos { color: var(--positive); }
+.delta.neg { color: var(--error); }
+.delta-none { color: var(--text-3); font-style: italic; }
+/* One line, always. A wrapped delta grows every card in the strip at once and
+   costs the priority action its place in the first screenful. */
+.metric .delta {
+  display: block; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ── priority action strip: 56-80px, never an editorial panel ───────────── */
 .priority {
   display: flex; align-items: center; gap: var(--s4);
@@ -288,6 +313,15 @@ table.data .sticky-l {
 }
 table.data thead .sticky-l { z-index: 3; background: var(--surface-sunken); }
 table.data tbody tr:hover .sticky-l { background: var(--surface-hover); }
+
+/* Declared column widths, for tables that carry CONTROLS at the right-hand end.
+   Automatic table layout sizes a column to its widest cell, so one long product
+   title widened the identity column until the price and commission inputs sat
+   past the edge of a 1,075px container — measured at 1,607px. Fixed layout
+   makes the width a decision instead of an accident: the identity column takes
+   what is left, and the controls keep their place on screen. Only for tables
+   that declare a <colgroup>; every other `table.data` still sizes itself. */
+table.data.fixed { table-layout: fixed; }
 
 .sortbtn {
   display: inline-flex; align-items: center; gap: 4px;
