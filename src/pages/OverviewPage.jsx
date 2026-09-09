@@ -34,6 +34,8 @@ export default function OverviewPage() {
   const qc = useQueryClient();
   const cur = shop.currency || 'USD';
   const [drawer, setDrawer] = useState(false);
+  // Whether the decision could be SAVED. Shown, never swallowed — see the catch below.
+  const [persistError, setPersistError] = useState(null);
 
   const { facts, decision, coreLoading, error } = useFacts(shop, scope);
 
@@ -72,8 +74,19 @@ export default function OverviewPage() {
       start: scope.start, end: scope.end,
       modelStart: scope.model.start, modelEnd: scope.model.end, objective: 'balanced',
     })
-      .then(() => qc.invalidateQueries({ queryKey: ['recs', shop.id] }))
-      .catch(() => { /* a failed write must not blank the page */ });
+      .then(() => { setPersistError(null); qc.invalidateQueries({ queryKey: ['recs', shop.id] }); })
+      // A SILENT CATCH IS HOW A MISSING RLS POLICY REACHED PRODUCTION.
+      //
+      // This swallowed every failure so a failed write could not blank the
+      // page — a reasonable instinct that hid a total feature outage. There
+      // was no INSERT policy on `recommendations`, every call was refused
+      // 42501, and the table held zero rows while the drawer offered Mark
+      // planned and Mark applied as though they would stick.
+      //
+      // The page still must not blank, so the error goes to a notice rather
+      // than to nowhere: the decision is unsaveable and the operator is told
+      // instead of discovering it when their record is missing tomorrow.
+      .catch((e) => setPersistError(e?.message || String(e)));
   }, [decision?.primary?.fingerprint, shop.id, scope.start, scope.end]);
 
   if (error) return <Notice tone="error">Could not load: {error.message}</Notice>;
@@ -224,6 +237,17 @@ export default function OverviewPage() {
         sub={`${shop.shop_name} · ${scope.start} → ${scope.end}`}
         right={<ReportToolbar scope={scope} shop={shop} />}
       />
+
+      {persistError && (
+        <Notice tone="warn">
+          <p>
+            <strong>This recommendation could not be saved.</strong> You can still read it, but it cannot
+            be planned, recorded or reviewed later, and it will not appear in History. The analysis on
+            this page is unaffected — only the record of it failed.
+          </p>
+          <p className="meta" style={{ margin: '6px 0 0' }}><code>{persistError}</code></p>
+        </Notice>
+      )}
 
       <CompletenessNotice sources={healthQ.data} page="overview" scope={scope} params={params} />
 

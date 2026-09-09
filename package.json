@@ -10,6 +10,7 @@
     "preview": "node scripts/preview.mjs",
     "test": "node scripts/classify-tests.mjs && node scripts/window-tests.mjs && node scripts/recommend-tests.mjs && node scripts/decide-tests.mjs && node scripts/marginal-tests.mjs && node scripts/momentum-tests.mjs && node scripts/copy-guard.mjs",
     "verify:live": "node scripts/verify-live.mjs",
+    "check:decisions": "node scripts/check-decision-log.mjs",
     "keycheck": "node scripts/key-check.mjs",
     "audit:bundle": "node scripts/bundle-audit.mjs",
     "check:rls": "node scripts/rls-check.mjs",

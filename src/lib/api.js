@@ -275,62 +275,94 @@ export const recommendationOutcome = (recId) =>
  */
 export async function persistRecommendation(shopId, decision, ctx) {
   if (!decision) return null;
-  const existing = await supabase
-    .from('recommendations')
-    .select('id, status')
-    .eq('shop_id', shopId)
-    .eq('fingerprint', decision.fingerprint)
-    .in('status', ['proposed', 'planned', 'applied'])
-    .maybeSingle();
 
-  if (existing.data && existing.data.status !== 'proposed') return existing.data;
-
-  const row = {
-    shop_id: shopId,
-    scope_type: ctx.scopeType || 'shop',
+  // THROUGH THE RPC, NOT A DIRECT WRITE. Two independent faults made the old
+  // path impossible, and both were silent:
+  //
+  //   1. `recommendations` had RLS enabled with SELECT and UPDATE policies and
+  //      NO INSERT POLICY. Every write was refused 42501, and OverviewPage
+  //      swallowed it. Zero rows were ever stored.
+  //   2. `.upsert(…, { onConflict: shop_id,fingerprint })` could not work
+  //      even with a policy: rec_live_fingerprint_idx is PARTIAL
+  //      (`where status in (proposed,planned)`) and Postgres will not infer
+  //      an arbiter from a partial index — 42P10.
+  //
+  // record_recommendation() does SELECT-then-INSERT inside a SECURITY DEFINER
+  // function, so the partial index is respected rather than fought, and a row
+  // already in flight is returned untouched — re-rendering Overview must never
+  // reset what somebody planned. It also refuses a client-supplied status: a
+  // recommendation is born proposed whatever this payload says.
+  const payload = {
+    action_code: decision.action_code,
+    scope_type: ctx.scopeType || shop,
     scope_id: ctx.scopeId || null,
     scope_label: ctx.scopeLabel || null,
-    affected_ids: decision.affected_ids || [],
-    fingerprint: decision.fingerprint,
     window_start: ctx.start,
     window_end: ctx.end,
     model_start: ctx.modelStart || null,
     model_end: ctx.modelEnd || null,
-    data_as_of: ctx.dataAsOf || null,
-    objective: ctx.objective || 'balanced',
-    source_mode: decision.source_mode,
     rule_version: decision.rule_version,
-    action_code: decision.action_code,
-    role: decision.role,
+    objective: ctx.objective || balanced,
     severity: decision.severity,
+    lane: decision.lane,
+    title: decision.title,
+    reason: decision.reason,
+    short_finding: decision.short_finding,
+    action_text: decision.action_text,
+    drill_to: decision.drill_to,
+    evidence: decision.evidence || [],
+    guardrails: decision.guardrails || [],
+    suppressed: decision.suppressed || [],
+    affected_ids: decision.affected_ids || [],
+    checks_ran: decision.checks_ran || [],
+    checks_not_run: decision.checks_not_run || [],
     current_value: decision.current_value,
     suggested_value: decision.suggested_value,
     change_abs: decision.change_abs,
     change_pct: decision.change_pct,
     value_unit: decision.value_unit,
     test_days: decision.test_days,
-    title: decision.title,
-    reason: decision.reason,
-    action_text: decision.action_text,
-    evidence: decision.evidence,
-    guardrails: decision.guardrails,
-    suppressed: decision.suppressed,
-    revenue_affected: decision.revenue_affected,
+    review_min_days: decision.review_min_days ?? null,
+    success_criterion: decision.success_criterion ?? null,
     confidence: decision.confidence,
     confidence_label: decision.confidence_label,
-    confidence_parts: decision.confidence_parts,
-    missing_inputs: decision.missing_inputs,
+    confidence_parts: decision.confidence_parts || [],
     model_confidence: decision.model_confidence,
     data_coverage: decision.data_coverage,
+    source_mode: decision.source_mode,
+    missing_inputs: decision.missing_inputs || [],
   };
 
-  const { data, error } = await supabase
-    .from('recommendations')
-    .upsert(row, { onConflict: 'shop_id,fingerprint' })
-    .select()
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('record_recommendation', {
+    p_shop_id: shopId,
+    p_fingerprint: decision.fingerprint,
+    p_payload: payload,
+  });
   if (error) throw new Error(error.message);
-  return data;
+  return Array.isArray(data) ? data[0] : data;
+}
+
+/**
+ * Record what a person DECIDED — accept, modify, reject or defer — with the
+ * reason, and optionally move the lifecycle at the same time.
+ *
+ * One call so the decision, the reason, the actor and the audit event are
+ * written together or not at all. The server refuses a reject or defer with no
+ * reason, refuses a defer with no return date, and collapses a repeat of the
+ * same decision to a no-op so a double-click cannot write two events.
+ */
+export async function recordDecision(recommendationId, decision, opts = {}) {
+  const { data, error } = await supabase.rpc('record_decision', {
+    p_recommendation_id: recommendationId,
+    p_decision: decision,
+    p_note: opts.note ?? null,
+    p_defer_until: opts.deferUntil ?? null,
+    p_applied_value: opts.appliedValue ?? null,
+    p_applied_known: opts.appliedKnown ?? null,
+    p_status: opts.status ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return Array.isArray(data) ? data[0] : data;
 }
 
 // ── outreach ────────────────────────────────────────────────────────────────
