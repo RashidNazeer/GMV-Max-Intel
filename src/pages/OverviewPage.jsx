@@ -14,16 +14,17 @@ import { useEffect, useState } from 'react';
 import { useOutletContext, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  listRecommendations, persistRecommendation, shopSpendDaily, listCampaigns,
+  listRecommendations, persistRecommendation, shopSpendDaily, listCampaigns, shopSourceHealth,
   money, pct, fixed, numOrNull,
 } from '../lib/api.js';
 import { useFacts } from '../lib/facts.js';
 import { scopedTo } from '../lib/scope.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import PerformanceChart from '../components/PerformanceChart.jsx';
+import CompletenessNotice from '../components/CompletenessNotice.jsx';
 import { PriorityStrip, RecommendationDrawer } from '../components/Decisions.jsx';
 import {
-  Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag,
+  Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint,
 } from '../components/ui.jsx';
 
 export default function OverviewPage() {
@@ -40,6 +41,10 @@ export default function OverviewPage() {
     queryFn: () => listRecommendations(shop.id, { status: ['proposed', 'planned', 'applied'] }),
   });
   const campaignsQ = useQuery({ queryKey: ['camps', shop.id], queryFn: () => listCampaigns(shop.id) });
+  const healthQ = useQuery({
+    queryKey: ['srchealth', shop.id, scope.start, scope.end],
+    queryFn: () => shopSourceHealth(shop.id, scope.start, scope.end),
+  });
   const spendQ = useQuery({
     queryKey: ['spendd', shop.id, scope.start, scope.end],
     queryFn: () => shopSpendDaily(shop.id, scope.start, scope.end),
@@ -131,6 +136,8 @@ export default function OverviewPage() {
         right={<ReportToolbar scope={scope} shop={shop} />}
       />
 
+      <CompletenessNotice sources={healthQ.data} page="overview" scope={scope} params={params} />
+
       <MetricSummary items={metrics} source="measured" loading={coreLoading} />
 
       {coreLoading
@@ -183,9 +190,8 @@ function CampaignTable({ campaigns, loading, cur, params }) {
   return (
     <Panel
       title="Campaigns"
-      sub="Settings are campaign-specific. Revenue is not available per campaign, so it is not shown here."
       bodyPad={false}
-      right={<Link className="btn btn-sm" to={scopedTo('/campaigns', params)}>All campaigns</Link>}
+      right={<><Hint text="Settings are campaign-specific. Revenue is not available per campaign, so it is not shown here." /><Link className="btn btn-sm" to={scopedTo('/campaigns', params)}>All campaigns</Link></>}
     >
       <div className="tablewrap">
         <table className="data">

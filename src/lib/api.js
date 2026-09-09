@@ -122,6 +122,18 @@ export const shopSpendDaily  = (id, s, e) => rpc('shop_spend_daily', { p_shop_id
 export const shopGmvDaily    = (id, s, e) => rpc('shop_gmv_daily', { p_shop_id: id, p_start: s, p_end: e });
 export const shopDataSources = (id) => rpc('shop_data_sources', { p_shop_id: id }).then(one);
 
+/**
+ * Five separate facts per source: what the latest attempt did, when it last
+ * SUCCEEDED, how far the stored records actually reach, which days of the
+ * selected window are missing, and whether any records exist at all.
+ *
+ * Data status previously labelled GMV Max Healthy while its coverage ended
+ * two days before the report, and treated a failed run as though the stored
+ * history had vanished. Those are different facts and both were wrong.
+ */
+export const shopSourceHealth = (id, s, e) =>
+  rpc('shop_source_health', { p_shop_id: id, p_start: s, p_end: e });
+
 export async function listCampaigns(shopId) {
   const { data, error } = await supabase
     .from('gmv_max_campaigns')

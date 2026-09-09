@@ -264,10 +264,14 @@ if (await drill.count()) {
   await page.waitForTimeout(4000);
   await page.screenshot({ path: path.join(OUT, 'journey--finding-drilldown.png') });
 
-  const banner = await page.locator(SEL.notice).first().innerText().catch(() => '');
-  const shown = banner.match(/Showing the (\d+)/);
+  // Target the finding CONTEXT BAR specifically. Reading the first .notice
+  // picked up whatever notice happened to render first — on Products that is
+  // the discount-unavailable note, which says nothing about the finding. A
+  // selector matching the wrong element fails for its own reasons.
+  const banner = await page.locator('.contextbar').first().innerText().catch(() => '');
+  const shown = banner.match(/(\d+)\s+(?:videos|products)/i);
   check('the drill-down states it is the finding\'s own set',
-    /finding/i.test(banner), banner.slice(0, 90));
+    /finding/i.test(banner), banner ? banner.slice(0, 90) : 'no .contextbar on the destination');
   if (claimed && shown) {
     check(`the count on the button (${claimed}) matches the set opened (${shown[1]})`,
       Number(shown[1]) === claimed, `button said ${claimed}, page says ${shown[1]}`);
@@ -290,8 +294,13 @@ const firstBefore = await page.locator(SEL.firstCell).first().innerText().catch(
 const nextBtn = page.locator(SEL.nextPage);
 if (await nextBtn.count() && await nextBtn.isEnabled()) {
   await nextBtn.click();
-  await page.waitForTimeout(3000);
-  const firstAfter = await page.locator(SEL.firstCell).first().innerText().catch(() => '');
+  // Same reason as the sort check: placeholderData keeps the old page visible
+  // during the refetch, so poll for the change rather than guess a duration.
+  let firstAfter = firstBefore;
+  for (let i = 0; i < 30 && firstAfter === firstBefore; i++) {
+    await page.waitForTimeout(500);
+    firstAfter = await page.locator(SEL.firstCell).first().innerText().catch(() => '');
+  }
   check('paging past the first 50 shows different rows', firstBefore !== firstAfter);
   await page.screenshot({ path: path.join(OUT, 'journey--creatives-page2.png') });
 } else {
@@ -303,8 +312,13 @@ await page.waitForTimeout(4000);
 const sortBtn = page.locator(SEL.sortGmv).first();
 const beforeSort = await page.locator(SEL.firstNumCell).first().innerText().catch(() => '');
 await sortBtn.click();
-await page.waitForTimeout(2500);
-const afterSort = await page.locator(SEL.firstNumCell).first().innerText().catch(() => '');
+// placeholderData keeps the previous rows on screen during the refetch, so
+// there is no skeleton to wait for. Poll for the value to actually change.
+let afterSort = beforeSort;
+for (let i = 0; i < 30 && afterSort === beforeSort; i++) {
+  await page.waitForTimeout(500);
+  afterSort = await page.locator(SEL.firstNumCell).first().innerText().catch(() => '');
+}
 check('clicking a sort header reorders the table', beforeSort !== afterSort,
   `${beforeSort} then ${afterSort}`);
 

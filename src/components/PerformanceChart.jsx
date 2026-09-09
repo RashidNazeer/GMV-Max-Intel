@@ -95,7 +95,7 @@ export default function PerformanceChart({ shop, scope, rows, loading, cur }) {
         </EmptyState>
       ) : (
         <>
-          <div style={{ height: 220 }}>
+          <div style={{ height: 200 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid stroke="var(--divider)" vertical={false} />
@@ -132,14 +132,14 @@ export default function PerformanceChart({ shop, scope, rows, loading, cur }) {
             </ResponsiveContainer>
           </div>
 
-          <p className="meta" style={{ margin: '8px 0 0' }}>
+          {(twoAxes || missing > 0) && <p className="meta" style={{ margin: '8px 0 0' }}>
             {twoAxes
               ? `Left axis: ${METRICS[picked[0]].label} (${unitWord(METRICS[picked[0]].unit, cur)}). `
                 + `Right axis: ${METRICS[picked[1]].label} (${unitWord(METRICS[picked[1]].unit, cur)})`
                 + `${units.size === 1 ? ', on its own scale so both series stay readable' : ''}.`
               : `Axis: ${unitWord(METRICS[picked[0]].unit, cur)}.`}
             {missing > 0 && ` ${missing} day${missing === 1 ? '' : 's'} have no shop data — the line breaks rather than dropping to zero.`}
-          </p>
+          </p>}
         </>
       )}
     </Panel>

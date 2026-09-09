@@ -25,7 +25,7 @@ import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  syncRuns, shopReconciliation, shopAttribution, shopProductStats, shopPaidRoas,
+  syncRuns, shopReconciliation, shopAttribution, shopProductStats, shopPaidRoas, shopSourceHealth,
   moneyExact, pct, numOrNull,
 } from '../lib/api.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
@@ -106,6 +106,12 @@ export default function DataStatusPage() {
   const canSeeDiagnostics = profile?.role === 'boss' || profile?.role === 'ol';
 
   const runsQ = useQuery({ queryKey: ['runs', shop.id], queryFn: () => syncRuns(shop.id, 12) });
+  // Latest attempt, latest success, stored coverage, and the gap in THIS
+  // window — four different facts that "Healthy" was collapsing into one.
+  const healthQ = useQuery({
+    queryKey: ['srchealth', shop.id, scope.start, scope.end],
+    queryFn: () => shopSourceHealth(shop.id, scope.start, scope.end),
+  });
   const reconQ = useQuery({
     queryKey: ['recon', shop.id, scope.start, scope.end],
     queryFn: () => shopReconciliation(shop.id, scope.start, scope.end),
@@ -236,13 +242,13 @@ export default function DataStatusPage() {
         sub="What each source feeds, when it last ran, and what to do when it has not finished."
         bodyPad={false}
       >
-        {runsQ.isLoading ? (
+        {runsQ.isLoading || healthQ.isLoading ? (
           <div className="panel-body"><Skeleton h={180} /></div>
-        ) : runsQ.error ? (
+        ) : runsQ.error || healthQ.error ? (
           <div className="panel-body">
-            <Notice tone="error">The sync history could not be read: {runsQ.error.message}</Notice>
+            <Notice tone="error">The sync history could not be read: {(runsQ.error || healthQ.error).message}</Notice>
           </div>
-        ) : !latest.size ? (
+        ) : !(healthQ.data || []).length ? (
           <EmptyState title="No sync has been recorded for this shop yet">
             Nothing has been collected for {shop.shop_name}, so every figure on the other tabs is
             absent rather than zero. Starting the first sync is an administrator task.
@@ -251,47 +257,63 @@ export default function DataStatusPage() {
           <div className="tablewrap">
             <table className="data">
               <thead>
+                {/* FIVE FACTS, NOT ONE.
+                    "Healthy" was being printed for a source whose coverage
+                    ended two days before the selected report, and a failed run
+                    read as though the stored history had vanished. The latest
+                    attempt, the latest success, the stored coverage and the
+                    gap in THIS window are separate columns because they are
+                    separate facts. */}
                 <tr>
                   <th className="sticky-l">Source</th>
                   <th>State</th>
-                  <th>Last run</th>
-                  <th className="num">Rows</th>
-                  <th>What it means</th>
+                  <th>Latest run</th>
+                  <th>Data reaches</th>
+                  <th>In this report</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
-                {[...latest.entries()].map(([job, r]) => {
-                  const meta = JOB_MEANING[job] || { label: job, why: '' };
-                  const ok = r.status === 'ok';
-                  const ex = ok ? null : explain(r);
+                {(healthQ.data || []).map((h) => {
+                  const r = latest.get(h.source);
+                  const tone = { complete: 'ok', stale: 'warn', incomplete: 'warn',
+                    failing: 'bad', absent: 'info' }[h.state] || 'info';
+                  const stateLabel = { complete: 'Complete', stale: 'Behind',
+                    incomplete: 'Partial', failing: 'Last run failed', absent: 'No data' }[h.state];
                   return (
-                    <tr key={job}>
+                    <tr key={h.source}>
                       <td className="sticky-l">
-                        <div><strong>{meta.label}</strong></div>
-                        {meta.why && <div className="meta">{meta.why}</div>}
+                        <div><strong>{h.label}</strong></div>
+                        <div className="meta">{h.purpose}</div>
+                      </td>
+                      <td><span className={`status status-${tone}`}>{stateLabel}</span></td>
+                      <td className="muted">
+                        <div>{h.latest_attempt_status === 'ok' ? 'Succeeded' : h.latest_attempt_status || 'Never run'}</div>
+                        <div className="meta">{when(h.latest_attempt_at)}</div>
+                      </td>
+                      <td className="muted">
+                        {h.coverage_end || <span className="muted">—</span>}
+                        {h.stale_days > 0 && (
+                          <div className="meta">{h.stale_days} day{h.stale_days === 1 ? '' : 's'} behind the report</div>
+                        )}
                       </td>
                       <td>
-                        <span className={`status status-${ok ? 'ok' : 'bad'}`}>
-                          {ok ? 'Healthy' : 'Action required'}
-                        </span>
+                        {h.complete
+                          ? <span className="muted">All {h.window_days} days</span>
+                          : (
+                            <>
+                              <div>{h.covered_days} of {h.window_days} days</div>
+                              {h.missing_from && (
+                                <div className="meta">missing from {h.missing_from}</div>
+                              )}
+                            </>
+                          )}
                       </td>
-                      <td className="muted">{when(r.started_at)}</td>
-                      <td className="num muted">
-                        {r.rows_written == null ? '—' : Number(r.rows_written).toLocaleString()}
-                      </td>
-                      <td>
-                        {ok ? (
-                          <span className="muted">
-                            Covering {r.window_start || '—'} → {r.window_end || '—'}
-                          </span>
-                        ) : (
-                          <div className="row" style={{ flexWrap: 'nowrap' }}>
-                            <span style={{ minWidth: 0 }}>{ex.plain}</span>
-                            <button className="btn btn-sm" style={{ flex: '0 0 auto' }}
-                              onClick={() => jobDrawer.open(job)}>
-                              What to do
-                            </button>
-                          </div>
+                      <td className="num">
+                        {(h.state !== 'complete' && r) && (
+                          <button className="btn btn-sm" onClick={() => jobDrawer.open(h.source)}>
+                            What to do
+                          </button>
                         )}
                       </td>
                     </tr>
