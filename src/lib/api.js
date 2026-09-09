@@ -164,6 +164,30 @@ export async function listSettingsChanges(shopId, limit = 50) {
 export const detectedSettingChanges = (shopId, since = null) =>
   rpc('campaign_setting_changes', { p_shop_id: shopId, p_since: since });
 
+/**
+ * The earliest settings snapshot we hold for this shop — the date before which
+ * NO effective campaign setting can be established.
+ *
+ * The snapshot table's own comment says it: history started 2026-09-08, Reacher
+ * exposes no settings endpoint that returns past values, and "its absence before
+ * that date is a real state, not a gap to fill in". A report ending before this
+ * date therefore has no budget or Target ROI on record for the days it covers,
+ * and any conclusion about whether the budget bound delivery is unsupported.
+ *
+ * Returns null when nothing has ever been recorded, which is the same answer
+ * for the decision layer: no evidence.
+ */
+export async function settingsEvidenceFrom(shopId) {
+  const { data, error } = await supabase
+    .from('campaign_setting_snapshots')
+    .select('taken_at')
+    .eq('shop_id', shopId)
+    .order('taken_at', { ascending: true })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return data?.[0]?.taken_at ?? null;
+}
+
 export async function syncRuns(shopId, limit = 8) {
   const { data, error } = await supabase
     .from('sync_runs')

@@ -41,6 +41,18 @@ const base = {
   marginal: healthyMarginal,
   dailyBudget: 320, targetRoi: 1.5,
   daysSinceLastChange: null,
+  // A settings record exists covering the analysed days. This fixture never had
+  // to say so before, because the budget guardrail never asked — it divided a
+  // training-period average by today's budget and called the result a statement
+  // about the campaign. It now demands provenance for that denominator, so the
+  // healthy baseline has to declare that its budget is actually known for the
+  // window. The shop WITHOUT that record is tested separately below.
+  settingsCoverWindow: true,
+  settingsFrom: '2026-07-01',
+  sourceHealth: [
+    { source: 'affiliate', missing_days: 0, coverage_end: '2026-09-06', state: 'complete' },
+    { source: 'gmv_max', missing_days: 0, coverage_end: '2026-09-06', state: 'complete' },
+  ],
   decliningIds: [], weakProductIds: [],
 };
 
@@ -285,6 +297,80 @@ console.log('\n── a report filter must not manufacture a passed check ──
   };
   check('a real creative constraint still wins',
     decide(constrained).primary.action_code, ACTION.REVIEW_CREATIVE);
+}
+
+// ── a budget conclusion needs a budget on record for the days analysed ──────
+// Issue 4: the app divided the model's mean daily spend (29 days, ending at the
+// cutoff) by the budget as it reads TODAY, and reported "the campaign is not
+// spending what it already has" — a present-tense claim about a campaign whose
+// settings history began AFTER the report ended. The ratio is the same number
+// either way; what changes is whether it is allowed to assert a cause.
+console.log('\n── no setting on record: the constraint is unknown, not absent ──');
+{
+  const unknown = {
+    ...base,
+    settingsCoverWindow: false,
+    settingsFrom: '2026-09-08',          // snapshots begin AFTER end 2026-09-06
+    dailyBudget: 1000,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+  };
+  // Raising budget is SUPPRESSED here, so its reason travels on the suppressed
+  // entry — the same accessor the under-utilised test above uses.
+  const why = suppressedFor(unknown, ACTION.INCREASE_BUDGET)?.why || '';
+
+  check('raising budget is not the primary action on unknown evidence',
+    decide(unknown).primary.action_code === ACTION.INCREASE_BUDGET, false);
+  check('and it does not claim the campaign underspent',
+    /not spending what it already has/.test(why), false);
+  check('it names the missing evidence instead',
+    /no campaign setting is recorded/.test(why), true);
+  check('and states when settings history actually begins', /2026-09-08/.test(why), true);
+  check('while still showing the ratio, labelled as a different period',
+    /different periods/.test(why), true);
+
+  // The SAME utilisation with a setting on record is a real, usable finding —
+  // the fix must not have simply silenced the guardrail.
+  const known = { ...unknown, settingsCoverWindow: true, settingsFrom: '2026-08-01' };
+  const kWhy = suppressedFor(known, ACTION.INCREASE_BUDGET)?.why || '';
+  check('with a setting on record the same ratio DOES conclude',
+    /not spending what it already has/.test(kWhy), true);
+  check('and stops talking about missing settings',
+    /no campaign setting is recorded/.test(kWhy), false);
+}
+
+// ── agreement is not completeness ──────────────────────────────────────────
+console.log('\n── a missing day is caught even when the totals agree ──');
+{
+  // affiliate_capture 0.99 — the two sources agree almost exactly — while the
+  // affiliate feed is a day short of the report. The old guardrail was called
+  // "affiliate evidence complete" and passed on exactly this.
+  // A reconciliation exception so the data candidate fires and its `capture`
+  // check actually runs — capture is only evaluated where a data action exists.
+  const shortDay = {
+    ...base,
+    attribution: { ...base.attribution, reconciliation_status: 'exception', reconciliation_pct: 0.03 },
+    sourceHealth: [
+      { source: 'affiliate', missing_days: 1, coverage_end: '2026-09-05', state: 'incomplete' },
+      { source: 'gmv_max', missing_days: 0, coverage_end: '2026-09-06', state: 'complete' },
+    ],
+  };
+  const d = decide(shortDay);
+  const all = d.all.flatMap((r) => r.guardrails || []).concat(d.primary?.guardrails || []);
+  const agree = all.find((x) => x.name === 'affiliate totals agree with Seller Center');
+  const dates = all.find((x) => x.name === 'every day of the report arrived');
+
+  check('the agreement check still passes — the totals do agree', agree?.passed, true);
+  check('but the date check fails', dates?.passed, false);
+  check('and names the source and the shortfall',
+    /affiliate is missing 1 day/.test(dates?.detail || ''), true);
+  check('no guardrail is still called "affiliate evidence complete"',
+    all.some((x) => x.name === 'affiliate evidence complete'), false);
+
+  // With no health data at all, completeness is UNAVAILABLE — never passed.
+  const noHealth = { ...base, sourceHealth: null };
+  const nd = decide(noHealth).all.flatMap((r) => r.guardrails || [])
+    .find((x) => x.name === 'every day of the report arrived');
+  check('unchecked completeness is unavailable, not a pass', nd?.available, false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

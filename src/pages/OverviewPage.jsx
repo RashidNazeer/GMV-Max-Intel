@@ -116,31 +116,47 @@ export default function OverviewPage() {
   const pa = priorAttrQ.data;
   const pr = priorRoasQ.data;
   const comparing = priorAttrQ.isLoading || priorRoasQ.isLoading;
-  const nowDays = Number(a?.days_covered) || 0;
-  const priorDays = Number(pa?.days_covered) || 0;
-  const shortCover = !comparing && nowDays > 0 && priorDays < nowDays;
-  // Two different absences, two different sentences. "covers 0 of 7 days" reads
-  // as a coverage shortfall in data that exists; nothing was stored at all.
-  const shortNote = (
-    <span className="delta delta-none">
-      {priorDays === 0
-        ? `nothing stored for ${scope.priorStart} → ${scope.priorEnd}`
-        : `prior period covers ${priorDays} of ${nowDays} days — not comparable`}
-    </span>
-  );
+
+  // ── ONE GUARD PER SOURCE. The first version had one, and it was the wrong
+  // one for three of the four metrics.
+  //
+  // `days_covered` comes from shop_attribution (Seller Center GMV days, via
+  // shop_channel_daily). `days_with_spend` comes from shop_paid_roas
+  // (gmv_max_daily_metrics). Different tables, filled by different sync jobs,
+  // and they drift: on 2026-09-07 the shop channels had all seven days while
+  // GMV Max stopped at 09-05. Both windows read days_covered = 7, so the single
+  // guard never fired — and the strip printed "Ad spend ▼ -23%" comparing FIVE
+  // days of spend against SEVEN. Per active day, spend was $253/day against
+  // $235/day: it had gone UP about 8%. A confident arrow pointing the wrong way
+  // is worse than no arrow, and it was rendering perfectly.
+  const cover = (nowN, priorN) => {
+    const n = Number(nowN);
+    const p = Number(priorN);
+    if (comparing || !Number.isFinite(n) || !Number.isFinite(p)) return { ok: true };
+    if (p === 0) return { ok: false, note: `nothing stored for ${scope.priorStart} → ${scope.priorEnd}` };
+    // SYMMETRIC. The original tripped only when the PRIOR window was short, but
+    // the common case is the CURRENT window short — recent days settle last —
+    // and that produces exactly the same false decline.
+    if (n !== p) return { ok: false, note: `${n} vs ${p} days of data — not comparable` };
+    return { ok: true };
+  };
+
+  const attrCover = cover(a?.days_covered, pa?.days_covered);          // Shop GMV
+  const spendCover = cover(r?.days_with_spend, pr?.days_with_spend);   // everything from shop_paid_roas
+
   // MM-DD, not the full ISO pair. A metric card is about 250px wide at 1440 and
   // "vs 2026-08-05 → 2026-08-11" wraps to a second line inside every one of
   // them, pushing the priority strip out of the first screenful. The year is
   // already on the page header and the full dates are in each metric's hint.
   const priorLabel = `vs ${scope.priorStart.slice(5)} → ${scope.priorEnd.slice(5)}`;
-  const delta = (current, prior, dir) => (shortCover ? shortNote : (
+  const delta = (cov, current, prior, dir) => (cov.ok ? (
     <Delta current={current} prior={prior} dir={dir} loading={comparing} label={priorLabel} />
-  ));
+  ) : <span className="delta delta-none">{cov.note}</span>);
 
   const metrics = [
     {
       label: 'Shop GMV', value: money(a?.total_gmv, cur), source: 'measured',
-      delta: delta(a?.total_gmv, pa?.total_gmv, 'up-good'),
+      delta: delta(attrCover, a?.total_gmv, pa?.total_gmv, 'up-good'),
       context: `${Number(a?.orders || 0).toLocaleString()} orders · ${a?.days_covered || 0} days`,
       hint: `Total TikTok Shop GMV from Seller Center for ${scope.start} to ${scope.end}, in the shop's reporting timezone. `
         + `The change is measured against ${scope.priorStart} → ${scope.priorEnd} — adjacent, equal length, no overlap.`,
@@ -150,14 +166,14 @@ export default function OverviewPage() {
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
       // 'neutral': spending more is neither good nor bad on its own, and
       // colouring it would be a recommendation this strip does not make.
-      delta: r ? delta(r.spend, pr?.spend, 'neutral') : null,
+      delta: r ? delta(spendCover, r.spend, pr?.spend, 'neutral') : null,
       context: r ? `${r.days_with_spend} days with spend` : 'ad account not connected',
       hint: 'GMV Max spend. A dash means no spend data exists, which is different from spend being zero. The change is not coloured — more spend is not itself better or worse.',
     },
     {
       label: 'GMV Max ROI', value: r ? fixed(r.reported_roi) : '—',
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
-      delta: r ? delta(r.reported_roi, pr?.reported_roi, 'up-good') : null,
+      delta: r ? delta(spendCover, r.reported_roi, pr?.reported_roi, 'up-good') : null,
       context: r ? `on ${money(r.reported_revenue, cur)} claimed` : 'no campaigns',
       hint: "GMV Max's own reported return: the revenue it attributes to itself, divided by spend. The ceiling of the band.",
     },
@@ -165,7 +181,7 @@ export default function OverviewPage() {
       // PROTECTED WORDING — unchanged in meaning and certainty.
       label: 'Proven return', value: r ? fixed(r.verified_roas) : '—',
       source: r ? (simulated ? 'simulated' : 'measured') : undefined,
-      delta: r ? delta(r.verified_roas, pr?.verified_roas, 'up-good') : null,
+      delta: r ? delta(spendCover, r.verified_roas, pr?.verified_roas, 'up-good') : null,
       context: r ? `${money(r.verified_paid_gmv, cur)} carries Shop Ads commission` : '—',
       hint: 'Revenue whose commission proves the ads drove it, divided by ALL spend. Every dollar in it is certainly ad-driven, so this is the floor of the band — the real return is between it and GMV Max’s own figure.',
     },

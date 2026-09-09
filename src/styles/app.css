@@ -205,7 +205,19 @@ label.field { display: flex; flex-direction: column; gap: var(--s1); font-size: 
 .metric { padding: var(--s3) var(--s4); min-width: 0; }
 .metric .label { font-size: 12px; line-height: 18px; color: var(--text-2); display: flex; align-items: center; gap: 4px; }
 .metric .value { font-size: 24px; line-height: 30px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
-.metric .ctx   { font-size: 12px; line-height: 18px; color: var(--text-3); margin-top: 2px; }
+/* SCOPE WRAPS; IT DOES NOT ELLIPSIZE.
+   `.ctx` carries the thing that makes the number mean something — which days,
+   which denominator, how many observed. At 1363px a five-across strip gives
+   each tile ~215px, and "$328/day over 29 observed days vs $550/day set now"
+   was cut to "$328/day over 29 observ…". A tooltip may carry methodology; it
+   must not be the only place essential meaning exists, because touch and
+   keyboard readers never see it. Two lines, then clamp — a tile cannot grow
+   without bound or it pushes the priority action out of the first screenful. */
+.metric .ctx {
+  font-size: 12px; line-height: 16px; color: var(--text-3); margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; white-space: normal;
+}
 .metric .value.pos { color: var(--positive); }
 .metric .value.neg { color: var(--error); }
 
@@ -215,11 +227,17 @@ label.field { display: flex; flex-direction: column; gap: var(--s1); font-size: 
 .delta.pos { color: var(--positive); }
 .delta.neg { color: var(--error); }
 .delta-none { color: var(--text-3); font-style: italic; }
-/* One line, always. A wrapped delta grows every card in the strip at once and
-   costs the priority action its place in the first screenful. */
+/* The delta stays one line — it is short by construction ("▼ -14% vs 08-25 →
+   08-31") and a wrapped one grows every card in the strip at once. Where it
+   carries a REASON instead of a percentage that reason can be long, so those
+   wrap to two rather than truncating the explanation to nothing. */
 .metric .delta {
   display: block; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.metric .delta-none {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; text-overflow: clip; white-space: normal; overflow-wrap: anywhere;
 }
 
 /* ── priority action strip: 56-80px, never an editorial panel ───────────── */

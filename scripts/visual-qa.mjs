@@ -726,6 +726,37 @@ check('budget utilisation discloses that it is a model baseline',
   !!utilCard && /model baseline/i.test(utilCard.delta || ''),
   utilCard ? utilCard.delta : 'no utilisation metric on the strip');
 
+// ── essential scope is READABLE, not hidden behind a tooltip ───────────────
+// At the audited 1363px the five-across strip gives each tile ~215px, and the
+// budget qualifier was cut to "…over 29 observ…". A tooltip may carry
+// methodology; it must not be the only place essential meaning lives, because
+// touch and keyboard readers never open one.
+console.log('\n── metric scope is readable without hover at 1363px ──');
+await page.setViewportSize({ width: 1363, height: 936 });
+await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector(SEL.metrics, { timeout: 30000 });
+await waitForData(page);
+const clipped = await page.evaluate(() => {
+  const out = [];
+  for (const m of document.querySelectorAll('.metric')) {
+    const label = m.querySelector('.label')?.innerText.trim() || '?';
+    for (const sel of ['.ctx', '.delta']) {
+      const el = m.querySelector(sel);
+      if (!el) continue;
+      // Horizontal clipping is the defect: text cut mid-word with no way to
+      // read the rest. Vertical clamping past two lines is a deliberate bound.
+      const over = el.scrollWidth - el.clientWidth;
+      if (over > 1) out.push({ label, sel, over, text: el.innerText.slice(0, 60) });
+    }
+  }
+  return out;
+});
+check('no metric truncates its scope text horizontally at 1363px',
+  clipped.length === 0,
+  clipped.map((c) => `${c.label}${c.sel} +${c.over}px "${c.text}"`).join(' | '));
+await page.screenshot({ path: path.join(OUT, 'gate--overview-1363-scope.png') });
+await page.setViewportSize({ width: 1440, height: 900 });
+
 // ── the campaign chart runs to the report end, gap and all ─────────────────
 console.log('\n── campaign chart coverage ──');
 await page.goto(`${BASE}/campaigns`, { waitUntil: 'domcontentloaded' });

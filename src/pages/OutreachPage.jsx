@@ -15,10 +15,11 @@
 // are `table.data` with a sticky identity column, and the warnings are Notices
 // so a sentence renders as a sentence instead of as spaced fragments.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { creatorGrowth, allCreatorGrowth, productCatalog, outreach, outreachLog } from '../lib/api.js';
 import { addDays } from '../lib/window.js';
+import { scopedTo } from '../lib/scope.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
   Panel, PageHeader, Notice, Skeleton, EmptyState, money, pct,
@@ -45,6 +46,7 @@ const actionLabel = (a) => String(a || '').replace(/_/g, ' ').replace(/^./, (c) 
 
 export default function OutreachPage() {
   const { shop, scope } = useOutletContext();
+  const [params] = useSearchParams();
   const end = scope.end;
   const cur = shop.currency || 'USD';
 
@@ -303,10 +305,29 @@ export default function OutreachPage() {
         {growthQ.isLoading ? (
           <div className="panel-body" style={{ paddingTop: 0 }}><Skeleton h={200} /></div>
         ) : !candidates.length ? (
-          <EmptyState title="No creators match this filter">
-            No creator grew at least {growth}× between {basis.priorStart} → {basis.priorEnd} and {basis.recentStart} → {basis.recentEnd} under these settings. Lower the growth
-            multiple, or paste handles from a sheet below.
-          </EmptyState>
+          /* TWO DIFFERENT EMPTIES, and advising a lower threshold is wrong for
+             one of them. If the growth query itself returned nothing, there is
+             no creator data for these dates at all and no filter setting will
+             produce a row — telling someone to lower the multiple sends them
+             round a loop that cannot end. Only when rows EXIST but none survive
+             the filter is the threshold the thing to change. */
+          (growthQ.data || []).length === 0 ? (
+            <EmptyState title="No creator data for these dates">
+              Nothing has been collected for {basis.priorStart} → {basis.recentEnd}
+              {allShops ? ' across any shop' : ` for ${shop.shop_name}`}, so there is no growth to compare and
+              no shortlist to build. This is missing data, not an absence of growth — changing the growth
+              multiple will not produce rows. Check <Link to={scopedTo('/data', params)}>Data status</Link>,
+              or paste handles from a sheet below.
+            </EmptyState>
+          ) : (
+            <EmptyState title="No creators match this filter">
+              {(growthQ.data || []).length} creator(s) have data for {basis.priorStart} → {basis.recentEnd},
+              but none grew at least {growth}× between {basis.priorStart} → {basis.priorEnd} and{' '}
+              {basis.recentStart} → {basis.recentEnd}
+              {organicOnly ? ', with ad-driven growth excluded' : ''}. Lower the growth multiple
+              {organicOnly ? ', untick "fully organic only"' : ''}, or paste handles from a sheet below.
+            </EmptyState>
+          )
         ) : (
           <div className="tablewrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
             <table className="data fixed">
@@ -383,10 +404,16 @@ export default function OutreachPage() {
               placeholder="one per line, or comma separated — @ optional"
               value={pasted} onChange={(e) => setPasted(e.target.value)} />
           </label>
+          {/* "may be lower than 0" is not a sentence about anything. With
+              nothing selected there is no count for Reacher to come back under,
+              so the caveat does not apply and is not shown. */}
           <p className="meta" style={{ margin: '6px 0 0' }}>
-            Pasted handles are merged with the ticked ones and de-duplicated. Reacher silently skips handles
-            it cannot match, so the count it reports back may be lower
-            than {countKnown ? selected.length : 'the number you have selected'}.
+            Pasted handles are merged with the ticked ones and de-duplicated.
+            {!countKnown
+              ? ' Reacher silently skips handles it cannot match, so the count it reports back may be lower than the number you have selected.'
+              : selected.length > 0
+                ? ` Reacher silently skips handles it cannot match, so the count it reports back may be lower than ${selected.length}.`
+                : ' No creators are selected yet — tick some above, or paste handles here.'}
           </p>
         </div>
       </Panel>
@@ -424,9 +451,13 @@ export default function OutreachPage() {
               <input className="input" value={supportEmail}
                 onChange={(e) => setSupportEmail(e.target.value)} placeholder="support@yourbrand.com" />
             </label>
+            {/* "neither shop" was written when there were two. There are three,
+                and there may be more — a sentence that counts the shops goes
+                stale the moment one is added. It names the selected shop instead,
+                which is the only one this invitation can belong to anyway. */}
             <p className="meta" style={{ margin: '4px 0 0', maxWidth: '72ch' }}>
-              Shown to the creator on the invitation card. Reacher requires it on every Target Collab, and
-              neither shop has a saved default configured.
+              Shown to the creator on the invitation card. Reacher requires it on every Target Collab,
+              and <strong>{shop.shop_name}</strong> has no saved default, so it must be entered here each time.
             </p>
           </div>
 
@@ -549,10 +580,19 @@ export default function OutreachPage() {
                 {selected.length} creators at —/day: enter a daily rate to see how long the list takes.
               </p>
             ) : (
-              <p className="meta" style={{ margin: '6px 0 0' }}>
-                {selected.length} creators at {dailyCap}/day ≈{' '}
-                <strong>{Math.max(1, Math.ceil(selected.length / Math.max(1, Number(dailyCap))))} day(s)</strong> to work through the list.
-              </p>
+              // An empty list takes no days. Math.max(1, …) floored the estimate
+              // at one, so zero creators read as "1 day(s) to work through the
+              // list" — a duration for work that does not exist.
+              selected.length === 0 ? (
+                <p className="meta" style={{ margin: '6px 0 0' }}>
+                  No creators selected, so there is nothing to pace yet.
+                </p>
+              ) : (
+                <p className="meta" style={{ margin: '6px 0 0' }}>
+                  {selected.length} creators at {dailyCap}/day ≈{' '}
+                  <strong>{Math.ceil(selected.length / Math.max(1, Number(dailyCap)))} day(s)</strong> to work through the list.
+                </p>
+              )
             )}
             {/* The caps are load-bearing but they are not what you came here to
                 read, so they sit one click away rather than as a paragraph. */}

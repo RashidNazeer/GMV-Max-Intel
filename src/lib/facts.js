@@ -15,7 +15,8 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   shopAttribution, shopCreativeHealth, shopTopVideos, shopProducts, shopProductStats,
-  shopPaidRoas, shopSpendDaily, listCampaigns, detectedSettingChanges,
+  shopPaidRoas, shopSpendDaily, listCampaigns, detectedSettingChanges, settingsEvidenceFrom,
+  shopSourceHealth,
 } from './api.js';
 import { fitSpendResponse, recoveryFor, TARGET } from './marginal.js';
 import { decide } from './decide.js';
@@ -31,6 +32,17 @@ export function useFacts(shop, scope) {
   const roasQ = useQuery({ queryKey: ['roas', ...key], queryFn: () => shopPaidRoas(id, scope.start, scope.end), enabled: on });
   const campaignsQ = useQuery({ queryKey: ['camps', id], queryFn: () => listCampaigns(id), enabled: on });
   const changesQ = useQuery({ queryKey: ['changes', id], queryFn: () => detectedSettingChanges(id), enabled: on });
+  // The date before which no campaign setting can be established for this shop.
+  // Needed to tell "the budget did not bind" apart from "no budget is on record
+  // for the days analysed" — two answers that look identical in a ratio.
+  const settingsFromQ = useQuery({ queryKey: ['setfrom', id], queryFn: () => settingsEvidenceFrom(id), enabled: on });
+  // Per-source DATE completeness. The decision pipeline had no completeness
+  // input at all, so a guardrail could pass on a window missing a day.
+  const healthQ = useQuery({
+    queryKey: ['srchealth', id, scope.start, scope.end],
+    queryFn: () => shopSourceHealth(id, scope.start, scope.end),
+    enabled: on,
+  });
 
   const productsQ = useQuery({
     queryKey: ['prods', ...key],
@@ -132,6 +144,16 @@ export function useFacts(shop, scope) {
     dailyBudget,
     targetRoi,
     daysSinceLastChange,
+    // Whether ANY setting record covers the days being analysed. Snapshots began
+    // 2026-09-08 and Reacher exposes no endpoint that returns past settings, so
+    // for a report ending before that there is no budget on file for the window
+    // — and "spend was 60% of budget" is then a statement about today's budget,
+    // not about what constrained delivery on those days.
+    sourceHealth: healthQ.data ?? null,
+    settingsFrom: settingsFromQ.data ?? null,
+    settingsCoverWindow: settingsFromQ.data
+      ? String(settingsFromQ.data).slice(0, 10) <= scope.start
+      : false,
     marginal: marginalShop,
     marginalReported,
     marginalVerified,

@@ -13,23 +13,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { setRecommendationStatus } from '../lib/api.js';
-import { ACTION } from '../lib/decide.js';
+import { ACTION, actionLabel } from '../lib/decide.js';
 import { Drawer, Notice, SourceTag, Panel, money, pct } from './ui.jsx';
-
-const ACTION_LABEL = {
-  [ACTION.INCREASE_BUDGET]: 'Raise budget',
-  [ACTION.DECREASE_BUDGET]: 'Cut budget',
-  [ACTION.INCREASE_TARGET_ROI]: 'Raise Target ROI',
-  [ACTION.DECREASE_TARGET_ROI]: 'Lower Target ROI',
-  [ACTION.TEST_MAX_DELIVERY]: 'Test Max Delivery',
-  [ACTION.EXIT_MAX_DELIVERY]: 'Exit Max Delivery',
-  [ACTION.HOLD]: 'Hold',
-  [ACTION.REVIEW_CREATIVE]: 'Review creative',
-  [ACTION.REVIEW_PROMOTION]: 'Review promotion',
-  [ACTION.REVIEW_LISTING]: 'Review listings',
-  [ACTION.FIX_DATA]: 'Data issue',
-  [ACTION.INSUFFICIENT_DATA]: 'Collect more data',
-};
 
 const value = (v, unit, cur) => {
   if (v == null) return '—';
@@ -83,7 +68,7 @@ export function PriorityStrip({ decision, shop, stored, othersCount = 0, onEvide
     <div className={`priority ${tone}`}>
       <div className="priority-main">
         <div className="priority-name">
-          {ACTION_LABEL[p.action_code] || p.action_code}
+          {actionLabel(p.action_code)}
           <SourceTag kind={p.source_mode} />
           <ConfidenceLabel decision={p} />
           {stored && stored.status !== 'proposed' && (
@@ -141,7 +126,7 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
 
   return (
     <Drawer open={open} onClose={onClose}
-      title={ACTION_LABEL[p.action_code] || p.action_code}
+      title={actionLabel(p.action_code)}
       sub={p.title}>
       <div className="stack">
         <p style={{ margin: 0, lineHeight: '22px' }}>{p.reason}</p>
@@ -203,7 +188,7 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
             <ul style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: '22px' }}>
               {p.suppressed.map((s, i) => (
                 <li key={i}>
-                  <strong>{ACTION_LABEL[s.action_code] || s.action_code}</strong> — not chosen because {s.why}.
+                  <strong>{actionLabel(s.action_code)}</strong> — not chosen because {s.why}.
                 </li>
               ))}
             </ul>
@@ -214,12 +199,30 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
           <section>
             <h3 className="section-title">Additional actions ({others.length})</h3>
             <ul style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: '22px' }}>
-              {others.map((o) => (
-                <li key={o.fingerprint}>
-                  <strong>{ACTION_LABEL[o.action_code] || o.action_code}</strong> — {o.title}
-                  {o.lane === 'data' && <span className="status status-info" style={{ marginLeft: 6 }}>data</span>}
-                </li>
-              ))}
+              {/* EVERY ENTRY CARRIES ITS GATE STATE. This was the one list in
+                  the drawer that printed a candidate's finding with no
+                  qualifier — "Other options" prints why it was not chosen and
+                  the priority strip prints "Blocked by", but this printed a
+                  bare title. So a dependent action could read as ready while
+                  its evidence was failing. A failed or unavailable check is
+                  named here rather than left to the reader to go and find. */}
+              {others.map((o) => {
+                const gates = o.guardrails || [];
+                const failed = gates.filter((g) => !g.passed && g.available !== false);
+                const unavailable = gates.filter((g) => g.available === false);
+                return (
+                  <li key={o.fingerprint}>
+                    <strong>{actionLabel(o.action_code)}</strong> — {o.title}
+                    {o.lane === 'data' && <span className="status status-info" style={{ marginLeft: 6 }}>data</span>}
+                    {(failed.length > 0 || unavailable.length > 0) && (
+                      <div className="meta" style={{ marginTop: 2 }}>
+                        {failed.length > 0 && <>Blocked by: {failed.map((g) => g.name).join(', ')}. </>}
+                        {unavailable.length > 0 && <>Cannot be checked: {unavailable.map((g) => g.name).join(', ')}.</>}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}
@@ -325,4 +328,3 @@ function Lifecycle({ rec, decision, persist }) {
   );
 }
 
-export { ACTION_LABEL };

@@ -60,14 +60,32 @@ export default function CreativePage() {
       context: `top 1 is ${pct(h.top1_share)}`,
       hint: 'Share of affiliate video revenue held by the five highest-earning videos.',
     },
+    // ── A LABEL COLLISION, NOT AN ARITHMETIC ERROR ────────────────────────
+    // This card counts the UNION of two mutually exclusive statuses. The SQL
+    // assigns each video exactly one: a video down >=30% that was earning >=100
+    // beforehand becomes `fatigue_risk` and NEVER `declining`. `declining_videos`
+    // and `declining_gmv` deliberately sum both.
+    //
+    // The table's status dropdown also has an option called "Declining GMV" —
+    // and that one means the single status. Same words, two populations:
+    // measured on Biostima 09-01..07, the card said 23 videos / $335.25 and the
+    // dropdown gave 18 videos / $29.31. Worse, the money is on the other side:
+    // $305.94 of the $335.25 sits in the five fatigue-risk videos the dropdown
+    // excludes, so following the headline into the filter loses 91% of what the
+    // headline was about. The card is renamed and states the split.
     {
-      label: 'Declining GMV',
+      label: 'Falling GMV',
       value: h.trend_measurable === false ? '—' : money(h.declining_gmv, cur),
       tone: gmv && Number(h.declining_gmv) / gmv >= 0.3 ? 'neg' : '',
       context: h.trend_measurable === false
         ? 'needs a 14-day window'
-        : `${h.declining_videos} videos down more than 30%`,
-      hint: 'A revenue drop against the previous 7 days, and nothing more. It does not claim an audience was worn out — that is Fatigue risk, which also requires the video to have been earning well beforehand.',
+        : `${h.declining_videos} down >30%: ${Math.max(0, Number(h.declining_videos) - Number(h.fatigue_videos))} declining · ${h.fatigue_videos} fatigue risk`,
+      hint: `Both falling statuses together — ${money(h.declining_gmv, cur)} across ${h.declining_videos} videos, of which `
+        + `${money(h.fatigue_gmv, cur)} is in the ${h.fatigue_videos} marked Fatigue risk. Every video carries exactly ONE `
+        + `status: a video down more than 30% that was earning well beforehand is Fatigue risk, not Declining. `
+        + `The table's "Declining GMV" filter shows only that second group, so it will list fewer videos and much less `
+        + `revenue than this card — filter to Fatigue risk to see the rest. A drop is a drop in revenue and nothing more; `
+        + `neither status claims an audience was worn out.`,
     },
     {
       label: 'Rising', value: h.trend_measurable === false ? '—' : money(h.rising_gmv, cur),

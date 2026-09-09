@@ -45,6 +45,35 @@ export const ACTION = {
   INSUFFICIENT_DATA: 'insufficient_data',
 };
 
+/**
+ * The one place an action code becomes words a buyer reads.
+ *
+ * This map used to live inside Decisions.jsx, the component that first needed
+ * it. The Evidence tab was written later, rendered the same `suppressed` array,
+ * and never picked it up — so one screen said "Lower Target ROI" and the other
+ * said `decrease_target_roi`. A label map that lives in one of its two consumers
+ * is a label map the next consumer will miss, so it sits beside the enum it
+ * labels and both screens import it from here.
+ */
+export const ACTION_LABEL = {
+  [ACTION.INCREASE_BUDGET]: 'Raise budget',
+  [ACTION.DECREASE_BUDGET]: 'Cut budget',
+  [ACTION.INCREASE_TARGET_ROI]: 'Raise Target ROI',
+  [ACTION.DECREASE_TARGET_ROI]: 'Lower Target ROI',
+  [ACTION.TEST_MAX_DELIVERY]: 'Test Max Delivery',
+  [ACTION.EXIT_MAX_DELIVERY]: 'Exit Max Delivery',
+  [ACTION.HOLD]: 'Hold',
+  [ACTION.REVIEW_CREATIVE]: 'Review creative',
+  [ACTION.REVIEW_PROMOTION]: 'Review promotion',
+  [ACTION.REVIEW_LISTING]: 'Review listings',
+  [ACTION.FIX_DATA]: 'Data issue',
+  [ACTION.INSUFFICIENT_DATA]: 'Collect more data',
+};
+
+/** Never render a bare action code. Falls back to the code so a new, unmapped
+ *  action is visibly unlabelled rather than silently blank. */
+export const actionLabel = (code) => ACTION_LABEL[code] || code;
+
 export const OBJECTIVE = { BALANCED: 'balanced', EFFICIENCY: 'efficiency', GMV_GROWTH: 'gmv_growth' };
 
 export const RULE_VERSION = '2026-09-08.1';
@@ -87,6 +116,15 @@ export function features(f = {}) {
 
     // Evidence quality — decides how much of everything else can be believed.
     capture: n(a?.affiliate_capture),
+    // FOUR DIFFERENT QUESTIONS, four different names. They were being conflated:
+    //   capture         — do our order lines and Seller Center AGREE on a total?
+    //   sourceCoverage  — did every DAY of the window actually arrive?
+    //   coverage        — what SHARE of shop GMV carries a commission signal?
+    //   reconciliation* — do the components sum to the source total?
+    // `sourceCoverage` is the one that was missing entirely: nothing in the
+    // decision pipeline consulted date completeness, so a guardrail named
+    // "affiliate evidence complete" passed on a window with a missing day.
+    sourceCoverage: Array.isArray(f.sourceHealth) ? f.sourceHealth : null,
     coverage: n(a?.attribution_coverage),
     reconciliationStatus: a?.reconciliation_status || null,
     reconciliationGap: n(a?.reconciliation_gap),
@@ -107,6 +145,12 @@ export function features(f = {}) {
     dailySpend: n(mg?.mean_daily_spend),
     utilisation: n(f.dailyBudget) > 0 && n(mg?.mean_daily_spend) != null
       ? n(mg.mean_daily_spend) / n(f.dailyBudget) : null,
+    // PROVENANCE FOR THE DENOMINATOR. `utilisation` divides a mean over the
+    // model's training days by ONE reading of the budget as it stands now.
+    // Those belong to different periods, and the ratio cannot say so on its own.
+    settingsCoverWindow: f.settingsCoverWindow === true,
+    settingsFrom: f.settingsFrom ? String(f.settingsFrom).slice(0, 10) : null,
+    modelDays: n(mg?.days),
     targetRoi: n(f.targetRoi),
 
     // Marginal model
@@ -198,9 +242,42 @@ const CHECKS = {
     ? { passed: false, name: 'revenue reconciles', detail: `components differ from total shop GMV by ${pct(x.reconciliationPct, 1)}` }
     : { passed: true, name: 'revenue reconciles' }),
 
+  // NAMED FOR WHAT IT MEASURES. This tests whether two sources AGREE on the
+  // affiliate total — it says nothing whatever about whether every day of the
+  // window arrived. It was called "affiliate evidence complete", and it read
+  // green beside an affiliate feed whose coverage ended a day before the report.
+  // Agreement and completeness are different questions with different fixes,
+  // and one of them was wearing the other's name. Date completeness is checked
+  // separately by `datesComplete` below, from shop_source_health.
   capture: (x) => (x.capture != null && (x.capture < 0.85 || x.capture > 1.05)
-    ? { passed: false, name: 'affiliate evidence complete', detail: `order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate revenue` }
-    : { passed: true, name: 'affiliate evidence complete' }),
+    ? { passed: false, name: 'affiliate totals agree with Seller Center', detail: `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate revenue — the two sources disagree` }
+    : {
+        passed: true,
+        name: 'affiliate totals agree with Seller Center',
+        detail: x.capture == null ? undefined : `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate figure`,
+      }),
+
+  // THE CHECK THAT WAS MISSING. Whether the days actually arrived — from
+  // shop_source_health, which measures coverage against the requested window
+  // rather than inferring it from a ratio that can look healthy on partial data.
+  datesComplete: (x) => {
+    if (!x.sourceCoverage || !x.sourceCoverage.length) {
+      return {
+        passed: false, available: false, name: 'every day of the report arrived',
+        detail: 'source coverage has not been checked for this window',
+      };
+    }
+    const short = x.sourceCoverage.filter((s) => Number(s.missing_days) > 0);
+    if (!short.length) return { passed: true, name: 'every day of the report arrived' };
+    return {
+      passed: false,
+      name: 'every day of the report arrived',
+      detail: short
+        .map((s) => `${s.source} is missing ${s.missing_days} day${Number(s.missing_days) === 1 ? '' : 's'}`
+          + `${s.coverage_end ? ` (through ${s.coverage_end})` : ''}`)
+        .join('; '),
+    };
+  },
 
   // A CHECK WITH NO EVIDENCE IS UNAVAILABLE, NEVER PASSED.
   //
@@ -226,15 +303,41 @@ const CHECKS = {
     return { passed: true, name: 'creative can absorb more spend' };
   },
 
-  budgetConstrained: (x) => (x.utilisation != null && x.utilisation >= 0.85
-    ? { passed: true, name: 'delivery is budget-constrained' }
-    : {
-        passed: false,
-        name: 'delivery is budget-constrained',
-        detail: x.utilisation == null
-          ? 'daily budget or delivered spend is unknown, so there is no evidence the budget is the limit'
-          : `spend is ${pct(x.utilisation)} of budget — the campaign is not spending what it already has`,
-      }),
+  // THREE STATES, for the same reason creativeSupply has three.
+  //
+  // The ratio divides the model's mean daily spend — an average over its
+  // TRAINING days — by the daily budget as it reads RIGHT NOW. When no setting
+  // is on record for the days analysed, those are different periods and the
+  // ratio cannot establish what constrained delivery then. Settings snapshots
+  // began 2026-09-08 and Reacher exposes no endpoint returning past values, so
+  // for the 09-01→09-07 report there is no budget on file for a single day it
+  // covers. Saying "the campaign is not spending what it already has" states a
+  // present-tense fact about the campaign; the evidence supports no such claim,
+  // and this string is what reaches the operator as the reason a budget change
+  // was rejected.
+  budgetConstrained: (x) => {
+    if (x.utilisation == null) {
+      return {
+        passed: false, available: false, name: 'delivery is budget-constrained',
+        detail: 'daily budget or delivered spend is unknown, so there is no evidence the budget is the limit',
+      };
+    }
+    if (!x.settingsCoverWindow) {
+      return {
+        passed: false, available: false, name: 'delivery is budget-constrained',
+        detail: `no campaign setting is recorded for these dates${x.settingsFrom ? ` — settings history begins ${x.settingsFrom}` : ''}`
+          + `, so whether the budget bound delivery cannot be established. The ${pct(x.utilisation)} figure divides the model's`
+          + ` mean daily spend across ${x.modelDays ?? 'its'} observed days by the budget set today, which are different periods.`,
+      };
+    }
+    return x.utilisation >= 0.85
+      ? { passed: true, name: 'delivery is budget-constrained' }
+      : {
+          passed: false,
+          name: 'delivery is budget-constrained',
+          detail: `spend is ${pct(x.utilisation)} of budget — the campaign is not spending what it already has`,
+        };
+  },
 
   cooldown: (x) => (x.daysSinceLastChange != null && x.daysSinceLastChange < COOLDOWN_DAYS
     ? { passed: false, name: 'no change still being read', detail: `a setting changed ${x.daysSinceLastChange} days ago; ${COOLDOWN_DAYS} are needed to read the result` }
@@ -278,14 +381,27 @@ const cFixData = (x) => {
     // repair task sitting at the top of someone's queue.
     severity: x.reconciliationStatus === 'exception' ? 'critical' : mismatched ? 'warning' : 'info',
     title,
+    // SCOPED TO WHAT IT ACTUALLY AFFECTS.
+    //
+    // This used to say the finding "outranks any conclusion drawn from them",
+    // which claimed a precedence the arbitration does not enforce: cFixData is
+    // the one candidate with no `suppresses` list, so a reconciliation exception
+    // removes nothing from the ranking. The drawer then showed "Lower Target
+    // ROI" beside a sentence saying every conclusion was outranked — two
+    // assertions that cannot both be true.
+    //
+    // The narrower sentence is also the more accurate one. It is the affiliate
+    // and channel SHARES that share this denominator; a Target ROI or creative
+    // decision measured from order lines does not, and the file's own principle
+    // at the top is that data checks are action-specific.
     reason: mismatched
-      ? `${problems.join('; ')}. Every share on this page has one of these as a denominator, so this outranks any conclusion drawn from them.`
+      ? `${problems.join('; ')}. The affiliate and channel shares on Attribution have one of these as a denominator, so read those with this in mind.`
       : `${problems.join('; ')}. The components still add up, so the figures are internally consistent — they simply describe the part of affiliate revenue we can see.`,
     actionText: mismatched
-      ? 'Open Data status for the day-by-day breakdown, then raise the discrepancy with Reacher before moving budget on these figures.'
+      ? 'Open Data status for the day-by-day breakdown, then raise the discrepancy with Reacher before moving budget on the affiliate figures.'
       : 'Nothing to repair here. Read every affiliate share on this page as a share of the Creator tab until Reacher ships Partner-tab ingestion.',
     evidence: problems,
-    checks: run(x, ['reconciled', 'capture']),
+    checks: run(x, ['reconciled', 'capture', 'datesComplete']),
     revenueAffected: x.totalGmv,
     // A data repair is not a media-buying opportunity, and mixing the two makes
     // a queue where neither can be worked through.
@@ -337,7 +453,7 @@ const cIncreaseBudget = (x) => {
   const floor = x.objective === OBJECTIVE.EFFICIENCY ? (x.avgRoas ?? 1) : 1;
   if (x.marginal < floor) return null;
 
-  const checks = run(x, ['spend', 'notSimulated', 'marginal', 'creativeSupply', 'budgetConstrained', 'cooldown']);
+  const checks = run(x, ['spend', 'notSimulated', 'marginal', 'creativeSupply', 'budgetConstrained', 'datesComplete', 'cooldown']);
   const band = sizeBand(BANDS.budget, x);
   const current = x.dailyBudget;
   const suggested = current != null ? current * (1 + band) : null;
@@ -391,7 +507,7 @@ const cDecreaseBudget = (x) => {
       `marginal ${x.marginal.toFixed(2)} against average ${x.avgRoas?.toFixed(2)}`,
       x.marginalCi ? `interval ${x.marginalCi[0].toFixed(2)}–${x.marginalCi[1].toFixed(2)}` : 'no interval',
     ],
-    checks: run(x, ['spend', 'notSimulated', 'marginal', 'cooldown']),
+    checks: run(x, ['spend', 'notSimulated', 'marginal', 'datesComplete', 'cooldown']),
     currentValue: current,
     suggestedValue: current != null ? current * (1 - band) : null,
     changePct: -band,
@@ -431,7 +547,7 @@ const cTargetRoi = (x) => {
       `Target ROI ${x.targetRoi.toFixed(2)}`,
       `marginal ${x.marginal.toFixed(2)}`,
     ],
-    checks: run(x, ['spend', 'notSimulated', 'marginal', 'creativeSupply', 'cooldown']),
+    checks: run(x, ['spend', 'notSimulated', 'marginal', 'creativeSupply', 'datesComplete', 'cooldown']),
     currentValue: x.targetRoi,
     suggestedValue: x.targetRoi * (1 - band),
     changePct: -band,

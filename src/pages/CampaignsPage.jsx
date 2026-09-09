@@ -49,13 +49,26 @@ export default function CampaignsPage() {
   );
 
   // A name filter over the list already in hand — no refetch, no query key.
+  //
+  // ACTIVE FIRST. The list arrived in whatever order the table returned it, so
+  // the one campaign actually spending money sat below two switched-off ones —
+  // the reader has to scan past things that cannot be acted on to reach the
+  // thing that can. Status is the primary sort; spend, then name, break ties so
+  // the order is stable across refreshes rather than dependent on row order.
   const term = q.trim().toLowerCase();
-  const shown = useMemo(
-    () => (term
+  const shown = useMemo(() => {
+    const list = term
       ? campaigns.filter((c) => String(c.campaign_name || c.campaign_id).toLowerCase().includes(term))
-      : campaigns),
-    [campaigns, term],
-  );
+      : campaigns;
+    return [...list].sort((a, b) => {
+      const active = (c) => (c.status === 'ENABLE' ? 0 : 1);
+      if (active(a) !== active(b)) return active(a) - active(b);
+      const budget = (c) => Number(c.daily_budget) || 0;
+      if (budget(a) !== budget(b)) return budget(b) - budget(a);
+      return String(a.campaign_name || a.campaign_id)
+        .localeCompare(String(b.campaign_name || b.campaign_id));
+    });
+  }, [campaigns, term]);
 
   if (campaignsQ.isLoading) {
     return (

@@ -30,6 +30,7 @@ import {
 } from '../lib/api.js';
 import { supabase } from '../lib/supabase.js';
 import { scopedTo } from '../lib/scope.js';
+import { addDays } from '../lib/window.js';
 import CreativeTable from '../components/CreativeTable.jsx';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
@@ -209,7 +210,7 @@ export default function ProductDetailPage() {
       </div>
 
       <div className="stack" role="tabpanel" id="product-tabpanel" aria-labelledby={`tab-${tab}`}>
-        {tab === 'funnel' && <Funnel rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} p={p} median={median} />}
+        {tab === 'funnel' && <Funnel rows={dailyQ.data} loading={dailyQ.isLoading} cur={cur} p={p} median={median} scope={scope} />}
         {tab === 'commerce' && (
           <Commerce
             p={p} cur={cur} related={related} campaigns={campaignsQ.data}
@@ -222,7 +223,7 @@ export default function ProductDetailPage() {
   );
 }
 
-function Funnel({ rows, loading, cur, p, median }) {
+function Funnel({ rows, loading, cur, p, median, scope }) {
   if (loading) return <Panel><Skeleton h={260} /></Panel>;
   if (!rows?.length) {
     return (
@@ -235,12 +236,26 @@ function Funnel({ rows, loading, cur, p, median }) {
     );
   }
 
-  const data = rows.map((d) => ({
-    day: String(d.day).slice(5),
-    GMV: Number(d.gmv) || 0,
-    Clicks: Number(d.clicks) || 0,
-    Conversion: d.clicks ? (Number(d.funnel_orders) || 0) / Number(d.clicks) : null,
-  }));
+  // THE AXIS RUNS TO THE REPORT END, exactly as the campaign chart now does.
+  // Plotting only the returned rows made the axis stop at the last day the
+  // funnel feed had — a 09-07 report drew a chart ending 09-06, with nothing
+  // saying the last day was missing rather than flat. Absent days keep nulls:
+  // a break in the line, no bar, which is the honest rendering of "not
+  // collected". A day with a real zero still has a row and still plots zero.
+  const byDay = new Map((rows || []).map((d) => [String(d.day), d]));
+  const days = [];
+  for (let iso = scope.start; iso <= scope.end; iso = addDays(iso, 1)) days.push(iso);
+  const absent = days.filter((iso) => !byDay.has(iso));
+
+  const data = days.map((iso) => {
+    const d = byDay.get(iso);
+    return {
+      day: iso.slice(5),
+      GMV: d ? Number(d.gmv) || 0 : null,
+      Clicks: d ? Number(d.clicks) || 0 : null,
+      Conversion: d && d.clicks ? (Number(d.funnel_orders) || 0) / Number(d.clicks) : null,
+    };
+  });
 
   return (
     <>
@@ -269,6 +284,15 @@ function Funnel({ rows, loading, cur, p, median }) {
         </div>
         <p className="meta" style={{ margin: '8px 0 0' }}>
           Left axis: GMV ({cur}). Right axis: clicks (count).
+          {absent.length > 0 && (
+            <> {' '}
+              <strong>
+                {absent.length} of these {days.length} day{days.length === 1 ? '' : 's'} have no funnel row
+              </strong>{' '}
+              ({absent.length <= 4 ? absent.join(', ') : `${absent[0]} … ${absent[absent.length - 1]}`}).
+              The axis still runs to {scope.end}; those days are blank rather than zero.
+            </>
+          )}
         </p>
       </Panel>
 

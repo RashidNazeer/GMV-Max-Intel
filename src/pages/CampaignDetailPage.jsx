@@ -34,6 +34,7 @@ import {
   SourceTag, Hint, Unavailable, Boundary,
 } from '../components/ui.jsx';
 import { isAnswerable, recoveryFor, TARGET_LABEL } from '../lib/marginal.js';
+import { actionLabel } from '../lib/decide.js';
 
 const TABS = [
   { id: 'performance', label: 'Performance' },
@@ -638,7 +639,7 @@ function EvidenceTab({ decision, facts }) {
       >
         {p.suppressed?.length ? (
           <ul style={{ margin: 0, paddingLeft: 18, lineHeight: '22px' }}>
-            {p.suppressed.map((s, i) => <li key={i}><strong>{s.action_code}</strong> — {s.why}</li>)}
+            {p.suppressed.map((s, i) => <li key={i}><strong>{actionLabel(s.action_code)}</strong> — {s.why}</li>)}
           </ul>
         ) : (
           <p className="muted" style={{ margin: 0 }}>Nothing was suppressed for this window.</p>
