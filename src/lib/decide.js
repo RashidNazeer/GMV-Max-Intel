@@ -132,6 +132,13 @@ export function features(f = {}) {
     newVideos: n(c?.new_videos),
     baselineCoverage: n(c?.baseline_coverage),
     trendMeasurable: c?.trend_measurable !== false,
+    // The diagnostic window is anchored to the CUTOFF and no longer follows the
+    // report length. Both are carried so a recommendation can state which
+    // window its evidence came from.
+    diagnosticStart: c?.diagnostic_start || null,
+    diagnosticEnd: c?.diagnostic_end || null,
+    decliningOutsideReport: n(c?.declining_outside_report),
+    noBaselineVideos: n(c?.no_baseline_videos),
     creativeGmv,
 
     // Commerce
@@ -195,9 +202,29 @@ const CHECKS = {
     ? { passed: false, name: 'affiliate evidence complete', detail: `order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate revenue` }
     : { passed: true, name: 'affiliate evidence complete' }),
 
-  creativeSupply: (x) => (x.decliningShare != null && x.decliningShare >= 0.35
-    ? { passed: false, name: 'creative can absorb more spend', detail: `${pct(x.decliningShare)} of video revenue is on declining creative` }
-    : { passed: true, name: 'creative can absorb more spend' }),
+  // A CHECK WITH NO EVIDENCE IS UNAVAILABLE, NEVER PASSED.
+  //
+  // This is the defect that mattered most in the 9 September review. A 7-day
+  // report discarded the creative comparison window, so decliningShare came
+  // back as 0, this guardrail PASSED, and the recommendation flipped from
+  // "Review creative" (23 videos carrying 46% of video revenue) to "Lower
+  // Target ROI" — on identical data at an identical cutoff. Missing evidence
+  // must never read as evidence of absence.
+  creativeSupply: (x) => {
+    if (!x.trendMeasurable || x.baselineCoverage == null || x.baselineCoverage === 0) {
+      return {
+        passed: false, available: false, name: 'creative can absorb more spend',
+        detail: 'no prior-week comparison is available, so creative capacity cannot be confirmed either way',
+      };
+    }
+    if (x.decliningShare != null && x.decliningShare >= 0.35) {
+      return {
+        passed: false, name: 'creative can absorb more spend',
+        detail: `${pct(x.decliningShare)} of video revenue is on declining creative`,
+      };
+    }
+    return { passed: true, name: 'creative can absorb more spend' };
+  },
 
   budgetConstrained: (x) => (x.utilisation != null && x.utilisation >= 0.85
     ? { passed: true, name: 'delivery is budget-constrained' }
@@ -628,7 +655,13 @@ function shape(c, x, role, suppressedList) {
     reason: c.reason,
     action_text: c.actionText,
     evidence: c.evidence || [],
-    guardrails: (c.checks || []).map((k) => ({ name: k.name, passed: k.passed, detail: k.detail || null })),
+    guardrails: (c.checks || []).map((k) => ({
+      name: k.name, passed: k.passed,
+      // Three states, not two: passed, failed, or unavailable. A check that
+      // could not be evaluated is not a check that succeeded.
+      available: k.available !== false,
+      detail: k.detail || null,
+    })),
     suppressed: suppressedList,
     affected_ids: c.affectedIds || [],
     drill_to: c.drillTo || null,

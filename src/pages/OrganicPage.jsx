@@ -314,12 +314,18 @@ function CreatorTable({ rows, loading, error, cur }) {
               <td className="num">{moneyExact(r.paid_gmv, cur)}</td>
               <td>
                 <div className="row" style={{ flexWrap: 'nowrap' }}>
-                  <Bar value={r.paid_share == null ? null : 1 - Number(r.paid_share)}
+                  <Bar value={r.organic_share == null ? null : Number(r.organic_share)}
                     color="var(--series-organic)" />
+                  {/* organic_share comes from SQL with its numerator coalesced,
+                      so a creator with real organic revenue and NO ad-driven
+                      revenue reads 100% rather than a dash. `sum() FILTER`
+                      returns NULL when nothing matches, and NULL/x is NULL —
+                      which is what put a dash on seven Biostime creators whose
+                      organic revenue equalled their total. */}
                   <span className="num">
-                    {r.paid_share == null
-                      ? <Unavailable reason="No commission programme signal on this creator's orders, so the split cannot be measured." />
-                      : pct(1 - Number(r.paid_share), 0)}
+                    {r.organic_share == null
+                      ? <Unavailable reason="No classified affiliate revenue for this creator in this window, so there is no total to divide by." />
+                      : pct(Number(r.organic_share), 0)}
                   </span>
                 </div>
               </td>

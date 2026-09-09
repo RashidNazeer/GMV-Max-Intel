@@ -281,7 +281,7 @@ if (await drill.count()) {
 // ── creatives: search, sort, page past the first 50 ─────────────────────────
 console.log('\n── creatives is a working tool, not a dead end ──');
 await page.goto(`${BASE}/creatives`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(5000);
+await waitForData(page);
 
 const pagerText = await page.locator('.pager').first().innerText().catch(() => '');
 check('the table states the whole population', /of\s[\d,]+/.test(pagerText), pagerText.slice(0, 80));

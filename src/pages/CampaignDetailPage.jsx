@@ -21,6 +21,7 @@ import {
 } from 'recharts';
 import {
   listCampaigns, listRecommendations, detectedSettingChanges, recommendationOutcome,
+  persistRecommendation,
   money, moneyExact, pct, fixed, numOrNull,
 } from '../lib/api.js';
 import { useFacts } from '../lib/facts.js';
@@ -217,6 +218,11 @@ export default function CampaignDetailPage() {
       </div>
 
       <RecommendationDrawer
+        persist={() => persistRecommendation(shop.id, decision.primary, {
+          scopeType: 'shop', scopeLabel: shop.shop_name,
+          start: scope.start, end: scope.end,
+          modelStart: scope.model.start, modelEnd: scope.model.end, objective: 'balanced',
+        })}
         open={drawer} onClose={() => setDrawer(false)}
         decision={decision} shop={shop} stored={stored}
         others={(decision?.all || []).filter((x) => x.fingerprint !== decision?.primary?.fingerprint)}

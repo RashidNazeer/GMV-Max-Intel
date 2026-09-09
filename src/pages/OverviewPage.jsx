@@ -150,6 +150,11 @@ export default function OverviewPage() {
       <RecommendationDrawer
         open={drawer} onClose={() => setDrawer(false)}
         decision={decision} shop={shop} stored={stored} others={others} params={params}
+        persist={() => persistRecommendation(shop.id, decision.primary, {
+          scopeType: 'shop', scopeLabel: shop.shop_name,
+          start: scope.start, end: scope.end,
+          modelStart: scope.model.start, modelEnd: scope.model.end, objective: 'balanced',
+        })}
       />
     </>
   );

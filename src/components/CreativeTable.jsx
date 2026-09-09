@@ -69,7 +69,7 @@ export default function CreativeTable({
             </select>
             <ColumnPicker columns={ALL_COLUMNS} visible={cols} onChange={setCols} />
             <span className="spacer" />
-            <span className="meta">{Number(total || 0).toLocaleString()} results</span>
+            <span className="meta">{total == null ? 'Counting…' : `${Number(total).toLocaleString()} results`}</span>
             {filtered && <button className="btn btn-sm" onClick={onClear}>Clear filters</button>}
           </div>
           {contextBar}
@@ -98,7 +98,7 @@ export default function CreativeTable({
                 {show('share') && <th>Ad share</th>}
                 <SortHeader label="Orders" field="orders" sort={sort} dir={dir} onSort={onSort} num />
                 <SortHeader label="7-day trend" field="trend" sort={sort} dir={dir} onSort={onSort} num
-                  hint="Last 7 complete days against the 7 immediately before. Both windows are retrieved even when the report range is shorter." />
+                  hint="The last 7 complete days against the 7 before, anchored to the reporting cutoff. This comparison is retrieved in full whatever the report length — a 7-day report no longer shortens it." />
                 {show('age') && <SortHeader label="Age" field="age" sort={sort} dir={dir} onSort={onSort} num />}
                 {show('views') && <SortHeader label="Lifetime views" field="views" sort={sort} dir={dir} onSort={onSort} num
                   hint="Lifetime views from the video feed. The reporting date filter does NOT change them." />}
@@ -139,7 +139,7 @@ export default function CreativeTable({
         </div>
       )}
 
-      {onPage && <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={onPage} />}
+      {onPage && <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={onPage} loading={loading} />}
 
       <CreativeDrawer video={openVideo} cur={cur} onClose={() => setOpenVideo(null)} />
     </>

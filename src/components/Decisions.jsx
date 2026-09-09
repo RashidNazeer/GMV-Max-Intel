@@ -132,7 +132,7 @@ function ConfidenceLabel({ decision }) {
  * "Other options" rather than "Why not the other 2 actions?" — same content,
  * a name instead of a question.
  */
-export function RecommendationDrawer({ open, onClose, decision, shop, stored, others = [], params }) {
+export function RecommendationDrawer({ open, onClose, decision, shop, stored, others = [], params, persist }) {
   const p = decision?.primary;
   const cur = shop?.currency || 'USD';
   if (!p) return null;
@@ -224,7 +224,7 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
           </section>
         )}
 
-        <Lifecycle rec={stored} decision={p} />
+        <Lifecycle rec={stored} decision={p} persist={persist} />
 
         {d && <Link className="btn btn-primary" to={d.to} onClick={onClose}>{d.label}</Link>}
       </div>
@@ -237,23 +237,49 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
  * one — nothing in this codebase writes a setting — and the confirmation says
  * so in those words.
  */
-function Lifecycle({ rec, decision }) {
+function Lifecycle({ rec, decision, persist }) {
   const qc = useQueryClient();
   const [applying, setApplying] = useState(false);
   const [actual, setActual] = useState('');
 
   const mut = useMutation({
-    mutationFn: ({ status, actualValue, reason }) => setRecommendationStatus(rec, status, { actualValue, reason }),
+    // Create the record if it does not exist yet, then move it. Persisting is
+    // idempotent by fingerprint, so a double submission cannot make two tests.
+    mutationFn: async ({ status, actualValue, reason }) => {
+      const target = rec || (persist ? await persist() : null);
+      if (!target) throw new Error('This recommendation could not be saved, so it cannot be recorded.');
+      return setRecommendationStatus(target, status, { actualValue, reason });
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['recs'] }); setApplying(false); },
   });
 
-  if (!rec) return null;
+  // THE DRAWER'S ONLY BUTTON WAS CLOSE.
+  //
+  // This returned null whenever the recommendation had not yet been saved —
+  // which is always true on campaign detail, because that page reads stored
+  // records but never writes one. So the drawer described a test the operator
+  // had no way to record, while campaign History promised that marking one
+  // applied would record it. The workflow could not be completed from the
+  // place it was described.
+  //
+  // The record is now created on demand, at the moment the operator acts.
+  if (!rec && !persist) {
+    return (
+      <section>
+        <h3 className="section-title">Your decision</h3>
+        <p className="meta" style={{ margin: '8px 0 0' }}>
+          This recommendation is not yet tracked for this shop, so it cannot be recorded here.
+          Open it from Overview to plan or record it.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section>
       <h3 className="section-title">Your decision</h3>
       <div className="row" style={{ marginTop: 8 }}>
-        {rec.status === 'proposed' && (
+        {(!rec || rec.status === 'proposed') && (
           <>
             <button className="btn" disabled={mut.isPending} onClick={() => mut.mutate({ status: 'planned' })}>Mark planned</button>
             <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
@@ -261,16 +287,16 @@ function Lifecycle({ rec, decision }) {
               onClick={() => mut.mutate({ status: 'dismissed', reason: 'dismissed from evidence drawer' })}>Dismiss</button>
           </>
         )}
-        {rec.status === 'planned' && (
+        {rec?.status === 'planned' && (
           <>
             <span className="status status-accent">Planned</span>
             <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
           </>
         )}
-        {rec.status === 'applied' && (
+        {rec?.status === 'applied' && (
           <span className="status status-ok">
-            Applied{rec.applied_value != null ? ` at ${rec.applied_value}` : ''}
-            {rec.applied_at ? ` · ${new Date(rec.applied_at).toLocaleDateString()}` : ''}
+            Applied{rec?.applied_value != null ? ` at ${rec.applied_value}` : ''}
+            {rec?.applied_at ? ` · ${new Date(rec.applied_at).toLocaleDateString()}` : ''}
           </span>
         )}
       </div>

@@ -120,7 +120,7 @@ export default function CreativePage() {
 
       <Panel bodyPad={false}>
         <CreativeTable
-          rows={listQ.data?.rows} total={listQ.data?.total ?? 0} loading={listQ.isLoading}
+          rows={listQ.data?.rows} total={listQ.data?.total ?? null} loading={listQ.isLoading}
           cur={cur} page={page} sort={sort} dir={dir} search={search} status={status}
           trendMeasurable={h?.trend_measurable !== false}
           onSort={onSort}

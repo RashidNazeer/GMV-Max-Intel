@@ -100,7 +100,8 @@ const STATUS_META = {
   rising:       { label: 'Rising',        tone: 'ok',   why: 'Up more than 30% against the previous 7 days.' },
   declining:    { label: 'Declining GMV', tone: 'warn', why: 'Down more than 30% against the previous 7 days. A revenue drop only — nothing here claims an audience was worn out.' },
   fatigue_risk: { label: 'Fatigue risk',  tone: 'bad',  why: 'Was earning meaningfully before it fell more than 30%. Per-video spend is not available, so continuing exposure cannot be confirmed.' },
-  new:          { label: 'New',           tone: 'info', why: 'First sold inside the last 7 days, so it has no prior week to compare against.' },
+  new:          { label: 'New',           tone: 'info', why: 'Its first sale ever is inside the last 7 days — established from full history, not from the first row of a filtered report.' },
+  no_baseline:  { label: 'No baseline',   tone: 'info', why: 'No revenue in the prior diagnostic week, and not new either. A comparison cannot be computed — this is unavailable, not a 100% decline.' },
 };
 
 export const StatusLabel = ({ status }) => {
@@ -227,7 +228,14 @@ export function SortHeader({ label, field, sort, dir, onSort, num = false, hint,
   );
 }
 
-export function Pager({ page, pageSize, total, onPage }) {
+export function Pager({ page, pageSize, total, onPage, loading }) {
+  // "No results" is a MEASUREMENT. Rendering it before the query has answered
+  // tells the reader something the app has not established — the same defect as
+  // a confident zero, in a different place. Caught by the browser gate reading
+  // a creatives table that held 550 rows.
+  if (loading && total == null) {
+    return <div className="pager"><span className="skel" style={{ height: 14, width: 150 }} /></div>;
+  }
   const t = Number(total) || 0;
   const pages = Math.max(1, Math.ceil(t / pageSize));
   const from = t === 0 ? 0 : page * pageSize + 1;

@@ -148,7 +148,7 @@ function ShopSelect({ shops, active, onPick, loading }) {
       onChange={(e) => onPick(e.target.value)} style={{ maxWidth: 230, fontWeight: 500 }}>
       {shops.map((s) => (
         <option key={s.shop_id} value={s.shop_id}>
-          {s.shop_name}{Number(s.lines) ? ` — ${money(s.gmv, s.currency)}` : ' — no data'}
+          {s.shop_name}{Number(s.lines) ? '' : ' — no data'}
         </option>
       ))}
     </select>

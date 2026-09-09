@@ -236,5 +236,56 @@ console.log('\n── revenue affected is labelled honestly ──');
   check('no action claims a forecast field', d.all.every((r) => !('money_at_stake' in r)), true);
 }
 
+
+console.log('\n── a report filter must not manufacture a passed check ──');
+{
+  // THE 9 SEPTEMBER DEFECT, in one test.
+  //
+  // A 7-day report discarded the creative comparison window. decliningShare
+  // came back as 0, the creative guardrail PASSED, and the recommendation
+  // flipped from "Review creative" (23 videos carrying 46% of video revenue)
+  // to "Lower Target ROI" — same shop, same cutoff, same underlying data.
+  //
+  // Missing evidence is not evidence of absence. The guardrail is now
+  // UNAVAILABLE when there is no baseline, and unavailable never passes.
+  const noHistory = {
+    ...base,
+    creative: {
+      ...base.creative,
+      baseline_coverage: 0,        // the report threw the prior week away
+      declining_videos: 0, declining_gmv: 0,
+    },
+    dailyBudget: 1000,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+    targetRoi: 1.5,
+  };
+  const d = decide(noHistory);
+  const guard = d.all.flatMap((r) => r.guardrails || [])
+    .find((g) => /creative can absorb/.test(g.name));
+
+  check('a missing baseline makes the creative check unavailable', guard?.available, false);
+  check('and unavailable is not passed', guard?.passed, false);
+  check('it says why rather than reporting a clean bill',
+    /cannot be confirmed either way/.test(guard?.detail || ''), true);
+
+  // With the history present and genuinely healthy, the same check passes.
+  const withHistory = {
+    ...noHistory,
+    creative: { ...base.creative, baseline_coverage: 0.65, declining_videos: 2, declining_gmv: 1000 },
+  };
+  const ok = decide(withHistory).all.flatMap((r) => r.guardrails || [])
+    .find((g) => /creative can absorb/.test(g.name));
+  check('a real baseline showing healthy creative does pass', ok?.passed, true);
+
+  // And a real constraint still blocks, as before.
+  const constrained = {
+    ...noHistory,
+    creative: { ...base.creative, baseline_coverage: 0.65, declining_videos: 23, declining_gmv: 40000 },
+    decliningIds: Array.from({ length: 23 }, (_, i) => `v${i}`),
+  };
+  check('a real creative constraint still wins',
+    decide(constrained).primary.action_code, ACTION.REVIEW_CREATIVE);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

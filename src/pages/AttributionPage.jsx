@@ -484,6 +484,11 @@ function Reconciliation({ a, recon, reconLoading, daily, dailyLoading, cur }) {
 
   const badDays = recon?.days_exception ?? 0;
   const totalDays = recon?.days ?? 0;
+  // The direction of each day's error, counted server-side, so the copy below
+  // can only say what the numbers support.
+  const posDays = Number(a?.recon_days_positive) || 0;
+  const negDays = Number(a?.recon_days_negative) || 0;
+  const bothSigns = posDays > 0 && negDays > 0;
 
   // The window can reconcile while most days do not, because daily errors in
   // opposite directions cancel. That is precisely what a window-only check
@@ -556,13 +561,25 @@ function Reconciliation({ a, recon, reconLoading, daily, dailyLoading, cur }) {
           </dd>
         </dl>
 
+        {/* THE COPY IS GENERATED FROM THE ACTUAL SIGNS, not from an assumption.
+            This previously said "daily errors in opposite directions cancel"
+            whenever the window passed and any day failed. On the reviewed
+            window all six daily errors were POSITIVE (+18.10, +30.98, +31.54,
+            +25.60, +1.80, +32.66) and nothing cancelled at all — the window and
+            the days were simply computed differently. Migration 018 makes the
+            window the sum of the days, so cancellation is now the only way they
+            can diverge, and it is claimed only when the signs prove it. */}
         {totalDays > 0 && (
           <p style={{ margin: 0 }}>
             <strong>{badDays} of {totalDays} days</strong> do not reconcile individually
-            {windowOk && badDays > 0
-              ? <> — even though the window total does. Daily errors in opposite directions cancel when
-                summed, which is why this is measured per day and not only per window.</>
-              : '.'}
+            {badDays > 0 && bothSigns
+              ? <> — and because {posDays} day{posDays === 1 ? '' : 's'} run positive while{' '}
+                {negDays} run negative, they partly offset when summed. That is why this is measured
+                per day and not only per window.</>
+              : badDays > 0 && !bothSigns
+                ? <> — all in the same direction ({posDays > 0 ? 'positive' : 'negative'}), so nothing
+                  offsets: the window difference is their sum.</>
+                : '.'}
             {recon?.worst_day && (
               <> Worst day: {recon.worst_day}, {moneyExact(recon.worst_gap, cur)} ({pct(recon.worst_pct, 1)}).</>
             )}
