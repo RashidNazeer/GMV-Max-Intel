@@ -113,6 +113,11 @@ async function launch() {
  * page mid-skeleton twice. Waiting for the skeletons to disappear tests the
  * thing we care about and fails honestly when they never do.
  */
+// Measured, not guessed: /products reaches zero skeletons at ~5,430ms, and the
+// skeleton count RISES partway through as the coverage query starts a second
+// load phase. Seven call sites here still used a fixed 4.5-5s sleep and one of
+// them duly reported "product thumbnails render: 0 found" on a page that
+// renders thirty of them. Every settle now polls.
 async function waitForData(p, timeout = 30000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeout) {
@@ -253,7 +258,7 @@ check('overview is no longer several screens of narrative', pageHeight < 2600, `
 console.log('\n── a finding drills through to its own evidence ──');
 await page.setViewportSize({ width: 1440, height: 900 });
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(5000);
+await waitForData(page);   // was a fixed sleep: see the note at waitForData
 
 const drill = page.locator(SEL.primaryAction).first();
 if (await drill.count()) {
@@ -344,7 +349,7 @@ if (await detailBtn.count()) {
 // ── products → product detail ───────────────────────────────────────────────
 console.log('\n── products open a real detail page ──');
 await page.goto(`${BASE}/products`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(4500);
+await waitForData(page);   // was a fixed sleep: see the note at waitForData
 const thumbs = await page.locator(SEL.thumb).count();
 check('product thumbnails render', thumbs > 0, `${thumbs} found`);
 
@@ -387,7 +392,7 @@ await waitForData(page);
 const prodLink = page.locator(SEL.rowLink).first();
 if (await prodLink.count()) {
   await prodLink.click();
-  await page.waitForTimeout(4500);
+  await waitForData(page);   // was a fixed sleep: see the note at waitForData
   check('a product row opens product detail', /\/products\/.+/.test(page.url()), page.url());
   check('the detail names its scope', await page.locator(SEL.detailTitle).isVisible());
   await page.screenshot({ path: path.join(OUT, 'journey--product-detail.png') });
@@ -433,7 +438,7 @@ await page.waitForTimeout(4000);
 const campLink = page.locator(SEL.rowLink).first();
 if (await campLink.count()) {
   await campLink.click();
-  await page.waitForTimeout(5000);
+  await waitForData(page);   // was a fixed sleep: see the note at waitForData
   check('a campaign name opens campaign detail', /\/campaigns\/.+/.test(page.url()), page.url());
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-detail.png') });
 
@@ -473,7 +478,7 @@ if (await planBtn.count()) {
 // ── switching shop must not leave the previous shop on screen ───────────────
 console.log('\n── switching shop leaves nothing behind ──');
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(5000);
+await waitForData(page);   // was a fixed sleep: see the note at waitForData
 const shopSel = page.locator(SEL.shopSelect).first();
 const options = await shopSel.locator('option').all();
 if (options.length > 1) {
@@ -483,7 +488,7 @@ if (options.length > 1) {
   // Immediately after the switch, the old shop's figure must not still be shown
   // as if it belonged to the new one.
   const mid = await page.locator(SEL.metricValue).first().innerText().catch(() => '');
-  await page.waitForTimeout(4500);
+  await waitForData(page);   // was a fixed sleep: see the note at waitForData
   const after = await page.locator(SEL.metricValue).first().innerText().catch(() => '');
   check('the new shop shows its own figures', before !== after || options.length === 1,
     `before ${before}, after ${after}`);
@@ -498,7 +503,7 @@ for (const [i, opt] of options.entries()) {
   const id = await opt.getAttribute('value');
   const label = (await opt.innerText()).split('—')[0].trim();
   await page.goto(`${BASE}/overview?shop=${id}&days=30`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(5000);
+  await waitForData(page);   // was a fixed sleep: see the note at waitForData
   const t = await page.evaluate(() => document.body.innerText);
   await page.screenshot({ path: path.join(OUT, `state--${label.toLowerCase().replace(/\W+/g, '-')}.png`) });
   const hasData = !/No shop data stored/i.test(t);
@@ -518,7 +523,7 @@ await dpage.fill('input[type=email]', 'mrrashid3255@gmail.com');
 await dpage.fill('input[type=password]', env.BOSS_LOGIN_PASSWORD);
 await dpage.click('button:has-text("Sign in")');
 await dpage.waitForSelector(SEL.header, { timeout: 30000 });
-await dpage.waitForTimeout(5000);
+await waitForData(dpage);   // same reason as every other settle here
 await dpage.screenshot({ path: path.join(OUT, 'theme--dark-overview.png') });
 
 // Text must not be rendered on a ground it cannot be read against.
@@ -541,6 +546,55 @@ check('dark theme: body has an explicit background, not transparent',
 check('dark theme: heading text is readable against it',
   contrast && contrast.ratio >= 4.5, `contrast ratio ${contrast?.ratio}`);
 await dark.close();
+
+// ── every campaign tab, twice round, without reloading ─────────────────────
+// The Scenario tab took the WHOLE APP SHELL down: `scope` was referenced inside
+// ScenarioTable, which was never passed it, and React's response to an uncaught
+// render error is to unmount everything. One undefined binding, one blank
+// browser window, no navigation left. Two things are asserted here — that the
+// panel renders, and that a failure could not blank the shell even if it did.
+console.log('\n── campaign tabs survive repeated switching ──');
+await page.setViewportSize({ width: 1363, height: 936 });
+await page.goto(`${BASE}/campaigns`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+const tabsCampLink = page.locator(SEL.rowLink).first();
+if (await tabsCampLink.count()) {
+  await tabsCampLink.click();
+  await page.waitForTimeout(2500);
+  await waitForData(page);
+
+  const errorsBefore = pageErrors.length;
+  let blanked = null;
+  // Twice round: a boundary that only survives the first visit is not a fix.
+  for (const pass of [1, 2]) {
+    for (const name of ['Scenario', 'Evidence', 'History', 'Performance']) {
+      const t = page.locator(`button:has-text("${name}")`).first();
+      if (!(await t.count())) continue;
+      await t.click();
+      await page.waitForTimeout(1400);
+      const alive = await page.evaluate((sel) => ({
+        shell: !!document.querySelector(sel),
+        len: document.body.innerText.length,
+      }), SEL.header);
+      if ((!alive.shell || alive.len < 200) && !blanked) blanked = `${name} (pass ${pass})`;
+    }
+  }
+  check('all four campaign tabs keep the app shell alive, twice round',
+    blanked === null, `${blanked} blanked the shell`);
+  check('and none of them threw an uncaught exception',
+    pageErrors.length === errorsBefore,
+    pageErrors.slice(errorsBefore).slice(0, 2).join(' | '));
+
+  // The panel must actually RENDER, not merely fail safely. A boundary that
+  // catches every time would satisfy the checks above and show nothing useful.
+  await page.locator('button:has-text("Scenario")').first().click();
+  await page.waitForTimeout(1800);
+  const scenarioText = await page.evaluate(() => document.body.innerText);
+  check('the Scenario panel renders its own content, not an error state',
+    !/could not be displayed/i.test(scenarioText),
+    'the boundary caught something — the panel is still broken');
+  await page.screenshot({ path: path.join(OUT, 'gate--campaign-scenario.png') });
+}
 
 // ── outreach: loads, and QA never sends ────────────────────────────────────
 // ── nothing was lost in the tidying ────────────────────────────────────────

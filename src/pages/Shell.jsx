@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
 import { shopSummary, syncRuns, shopReconciliation, shopPaidRoas, money } from '../lib/api.js';
 import { useScope, RANGES, scopedTo } from '../lib/scope.js';
-import { Skeleton, Notice, EmptyState } from '../components/ui.jsx';
+import { Skeleton, Notice, EmptyState, Boundary } from '../components/ui.jsx';
 
 const I = {
   overview: 'M3 12h4l2 6 4-14 2 8h6',
@@ -130,9 +130,17 @@ export default function Shell({ session, profile }) {
 
         {/* Remounting on shop change is what stops the previous shop's chart
             sitting under the new shop's header while the queries settle. */}
+        {/* The LAST line of defence. Anything a page throws stops here, so the
+            sidebar, the shop selector and the date control survive and the
+            operator can navigate away instead of reloading. Individual panels
+            have their own boundaries; this one exists because a page can fail
+            somewhere no panel boundary covers, and a blank browser window is
+            the one outcome that leaves someone with nothing to do. */}
         {shop && (
           <div key={`${shop.id}-${location.pathname}`} className="stack">
-            <Outlet context={{ shop, scope, profile, shops }} />
+            <Boundary name="This page" resetKey={`${shop.id}-${location.pathname}`}>
+              <Outlet context={{ shop, scope, profile, shops }} />
+            </Boundary>
           </div>
         )}
       </main>

@@ -51,8 +51,15 @@ const CHANNELS = [
     colour: 'var(--series-organic)', hint: COPY.seg.organic,  classified: true,  ofAffiliate: true },
   { key: 'gap',     field: 'affiliate_unmeasured_gmv', label: 'Affiliate, no line data',         short: 'Affiliate, no line data',
     colour: 'var(--series-gap)',     hint: COPY.seg.gap,      classified: false, ofAffiliate: true },
+  // DIAGNOSTIC, NOT A CHANNEL. This is the amount by which our own affiliate
+  // lines exceed Seller Center's affiliate figure — money that is ALREADY
+  // inside Ad-driven and Organic above. Listing it as a seventh revenue
+  // component added it to the total a second time and made every reported gap
+  // exactly twice the real disagreement ($140.68 for a $70.34 excess). It is
+  // rendered below the components, outside the sum. See migration 022.
   { key: 'over',    field: 'affiliate_overflow_gmv',   label: 'Affiliate, excess over source',   short: 'Affiliate, excess',
-    colour: 'var(--series-excess)',  hint: COPY.seg.overflow, classified: false, ofAffiliate: true },
+    colour: 'var(--series-excess)',  hint: COPY.seg.overflow, classified: false, ofAffiliate: true,
+    diagnostic: true },
   { key: 'seller',  field: 'seller_video_gmv',         label: 'Seller video',                    short: 'Seller video',
     colour: 'var(--series-seller)',  hint: COPY.seg.seller,   classified: false, ofAffiliate: false },
   { key: 'live',    field: 'live_gmv',                 label: 'LIVE',                            short: 'LIVE',
@@ -241,7 +248,11 @@ function RevenueMix({ a, cur }) {
 
   const suppressed = a.reconciliation_status === 'exception';
   const denom = suppressed ? Number(a.component_total) : total;
-  const segs = CHANNELS.map((c) => ({ ...c, value: Number(a[c.field]) || 0 }));
+  const all = CHANNELS.map((c) => ({ ...c, value: Number(a[c.field]) || 0 }));
+  // `segs` are the mutually exclusive revenue channels — the things that sum to
+  // the components total. Diagnostics sit below that sum, never inside it.
+  const segs = all.filter((c) => !c.diagnostic);
+  const diagnostics = all.filter((c) => c.diagnostic && c.value > 0.005);
 
   return (
     <Panel
@@ -332,6 +343,44 @@ function RevenueMix({ a, cur }) {
               <td className="num muted">—</td>
               <td className="num muted">—</td>
             </tr>
+
+            {/* BELOW THE LINE. Everything above sums; nothing here does. The
+                separator is the point — a reader must be able to see at a
+                glance which numbers are revenue and which are checks on it. */}
+            {diagnostics.length > 0 && (
+              <>
+                <tr>
+                  <td colSpan={5} style={{
+                    height: 34, verticalAlign: 'bottom', paddingBottom: 4,
+                    borderTop: '2px solid var(--divider)',
+                  }}>
+                    <span className="meta"><strong>Diagnostics — not revenue, not part of the total above</strong></span>
+                  </td>
+                </tr>
+                {diagnostics.map((s) => (
+                  <tr key={s.key}>
+                    <td className="sticky-l">
+                      <span className="row" style={{ gap: 'var(--s2)', flexWrap: 'nowrap' }}>
+                        <Swatch colour={s.colour} />
+                        <span className="truncate">{s.label}</span>
+                        <Hint text={s.hint} />
+                      </span>
+                    </td>
+                    <td className="num">{moneyExact(s.value, cur)}</td>
+                    <td className="num muted">—</td>
+                    <td className="num muted">{affiliate && s.ofAffiliate ? pct(s.value / affiliate, 1) : '—'}</td>
+                    <td className="num muted">—</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td colSpan={5} className="meta" style={{ paddingBottom: 10, whiteSpace: 'normal' }}>
+                    This amount is already counted inside Ad-driven and Organic above — it is the extent to
+                    which our own affiliate line data exceeds Seller Center's affiliate figure, not extra
+                    revenue. Adding it to the components would report the same money twice.
+                  </td>
+                </tr>
+              </>
+            )}
           </tbody>
         </table>
       </div>

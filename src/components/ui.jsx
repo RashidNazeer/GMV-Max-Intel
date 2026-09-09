@@ -6,9 +6,71 @@
 //   * A missing number renders as "—" with a reason, never as 0.
 //   * A badge that is wrong in a harmless direction teaches people to ignore
 //     it, so provenance is shown once per region and only where it is true.
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { Component, useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { money, moneyExact, pct, numOrNull, fixed } from '../lib/api.js';
+
+/**
+ * A render error in ONE panel must not take the whole app with it.
+ *
+ * React's default on an uncaught render error is to unmount the entire tree.
+ * This app had no boundary anywhere, so a single undefined binding inside the
+ * scenario table blanked the shell — no navigation, no shop selector, no way
+ * back except a reload. The bug was mine; the blast radius was the
+ * architecture's, and that is the part worth fixing.
+ *
+ * Three things it deliberately does NOT do:
+ *   * It does not swallow. The error is re-logged to console.error, so the
+ *     browser QA gate still fails on it instead of seeing a tidy screen.
+ *   * It does not substitute zeros or empty data for a broken model. A panel
+ *     that cannot render says so; it does not invent a result.
+ *   * It does not hide what happened. The message is available on the page,
+ *     because "something went wrong" tells an operator nothing they can act on.
+ *
+ * `resetKey` clears the error when the surrounding context changes — a new tab,
+ * shop or window is a fresh attempt, not the same failure.
+ */
+export class Boundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    // Re-raised on purpose: silence here would mean an automated check that
+    // watches the console could pass while a panel is dead on screen.
+    console.error(`[${this.props.name || 'panel'}] render failed:`, error, info?.componentStack);
+  }
+
+  componentDidUpdate(prev) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Notice tone="error">
+        <p>
+          <strong>{this.props.name || 'This panel'} could not be displayed.</strong>{' '}
+          The rest of the page is unaffected — navigation, the shop selector and every other
+          panel still work. Nothing here has been replaced with zeros or placeholder figures.
+        </p>
+        <p className="meta" style={{ margin: '6px 0 0' }}>
+          <code>{String(this.state.error?.message || this.state.error)}</code>
+        </p>
+        <p style={{ margin: '8px 0 0' }}>
+          <button className="btn btn-sm" onClick={() => this.setState({ error: null })}>Try again</button>
+        </p>
+      </Notice>
+    );
+  }
+}
 
 /* ── panels ──────────────────────────────────────────────────────────────── */
 

@@ -13,11 +13,15 @@ import {
 } from 'recharts';
 import { Panel, Skeleton, EmptyState, money, moneyExact } from './ui.jsx';
 
+// STACKED BANDS ARE MUTUALLY EXCLUSIVE REVENUE. The affiliate EXCESS is not a
+// band and never was: it is the amount by which our own affiliate lines exceed
+// what Seller Center reports, and it is already inside Ad-driven + Organic.
+// Stacking it added the same money to the chart twice -- it is a diagnostic,
+// shown as the reconciliation mark below the axis, not as revenue.
 const SERIES = [
   ['Ad-driven', 'var(--series-paid)'],
   ['Organic', 'var(--series-organic)'],
   ['Affiliate (no line data)', 'var(--series-gap)'],
-  ['Affiliate (excess)', 'var(--series-excess)'],
   ['Seller video', 'var(--series-seller)'],
   ['LIVE', 'var(--series-live)'],
   ['Product card', 'var(--series-card)'],
@@ -30,7 +34,8 @@ export default function ChannelChart({ rows, loading, cur, title = 'Daily revenu
     'Ad-driven': Number(d.measured_paid_gmv) || 0,
     Organic: Number(d.measured_organic_gmv) || 0,
     'Affiliate (no line data)': Number(d.affiliate_unmeasured_gmv) || 0,
-    'Affiliate (excess)': Number(d.affiliate_overflow_gmv) || 0,
+    // Carried for the tooltip and the exception mark, NOT plotted as a band.
+    _excess: Number(d.affiliate_overflow_gmv) || 0,
     'Seller video': Number(d.seller_video_gmv) || 0,
     LIVE: Number(d.live_gmv) || 0,
     'Product card': Number(d.product_card_gmv) || 0,

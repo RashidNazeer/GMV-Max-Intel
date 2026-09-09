@@ -98,6 +98,40 @@ function explain(run) {
 
 const when = (t) => (t ? new Date(t).toLocaleString() : '—');
 
+/**
+ * Describe THIS window's residuals, from its own numbers.
+ *
+ * `net_gap_total` is the signed sum of the daily gaps; `abs_gap_total` is the
+ * sum of their absolute values. The relationship between the two is the whole
+ * story and it is arithmetic, not interpretation:
+ *
+ *   |net| == abs   every day errs in the same direction — nothing cancels
+ *   |net| <  abs   days err in both directions and partly offset
+ *   abs  == 0      every day genuinely reconciles
+ *
+ * Saying "errors in opposite directions may cancel" on an all-positive window
+ * describes a situation that is not occurring, and sends someone looking for a
+ * problem that is not there instead of the one that is.
+ */
+function reconResidualNote(recon) {
+  const base = 'Measured per day, because a window total can hide the days inside it.';
+  if (!recon) return `${base} No daily rows have been checked for this window yet.`;
+
+  const abs = Math.abs(Number(recon.abs_gap_total) || 0);
+  const net = Number(recon.net_gap_total) || 0;
+  if (abs <= 0.005) return `${base} Every day in this window reconciles.`;
+
+  const cancelled = abs - Math.abs(net);
+  if (cancelled <= 0.005) {
+    return `${base} In this window every daily difference runs the SAME way`
+      + `${net > 0 ? ' (our components exceed the source)' : ' (the source exceeds our components)'}`
+      + `, so nothing cancels: the net and absolute errors are both the same figure.`;
+  }
+  return `${base} In this window the daily differences run in both directions and partly offset:`
+    + ` they sum to a net ${net.toFixed(2)} while the individual days total ${abs.toFixed(2)}.`
+    + ` The net understates the disagreement by ${cancelled.toFixed(2)}.`;
+}
+
 export default function DataStatusPage() {
   const { shop, scope, profile } = useOutletContext();
   const [diag, setDiag] = useState(false);
@@ -180,7 +214,13 @@ export default function DataStatusPage() {
         : !recon ? 'no daily rows for this window'
           : recon.days_exception ? `${recon.days_exception} days do not add up`
             : 'all days add up',
-      hint: 'Measured per day. A window can net to zero while most days are wrong in opposite directions, which is why this is not a window-level check.',
+      // GENERATED FROM THE ACTUAL RESIDUALS, not a standing sentence about what
+      // reconciliation can do in general. This page told operators that daily
+      // errors in opposite directions may cancel, on a window where the net and
+      // absolute errors were BOTH $140.68 — every day wrong in the same
+      // direction, nothing cancelling. A true statement about the general case
+      // is still a false description of the window in front of you.
+      hint: reconResidualNote(recon),
     },
     {
       label: 'Ad spend source',

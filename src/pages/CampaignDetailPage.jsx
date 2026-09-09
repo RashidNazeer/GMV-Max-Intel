@@ -31,7 +31,7 @@ import { RecommendationDrawer } from '../components/Decisions.jsx';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
   Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState,
-  SourceTag, Hint, Unavailable,
+  SourceTag, Hint, Unavailable, Boundary,
 } from '../components/ui.jsx';
 import { isAnswerable, recoveryFor, TARGET_LABEL } from '../lib/marginal.js';
 
@@ -211,11 +211,17 @@ export default function CampaignDetailPage() {
 
       <TabRow tabs={TABS} value={tab} onChange={setTab} />
 
+      {/* One boundary per tab panel, keyed on the tab and window. A failure in
+          Scenario leaves the tab row, the metric strip and the shell intact, so
+          the operator can move to Performance instead of reloading — and
+          switching tabs clears the error rather than sticking to it. */}
       <div className="stack" id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
-        {tab === 'performance' && <Performance facts={facts} cur={cur} scope={scope} />}
-        {tab === 'scenario' && <Scenario facts={facts} cur={cur} scope={scope} />}
-        {tab === 'evidence' && <EvidenceTab decision={decision} facts={facts} />}
-        {tab === 'history' && <History shop={shop} recs={recsQ.data} recsLoading={recsQ.isLoading} />}
+        <Boundary name={TABS.find((t) => t.id === tab)?.label} resetKey={`${tab}:${scope.start}:${scope.end}`}>
+          {tab === 'performance' && <Performance facts={facts} cur={cur} scope={scope} />}
+          {tab === 'scenario' && <Scenario facts={facts} cur={cur} scope={scope} />}
+          {tab === 'evidence' && <EvidenceTab decision={decision} facts={facts} />}
+          {tab === 'history' && <History shop={shop} recs={recsQ.data} recsLoading={recsQ.isLoading} />}
+        </Boundary>
       </div>
 
       <RecommendationDrawer
@@ -446,7 +452,7 @@ function Scenario({ facts, cur, scope }) {
             right={<span className="meta">training {scope.model.start} → {scope.model.end}</span>}
             bodyPad={false}
           >
-            <ScenarioTable fit={head} cur={cur} />
+            <ScenarioTable fit={head} cur={cur} scope={scope} />
           </Panel>
         </>
       )}
@@ -480,7 +486,12 @@ function Scenario({ facts, cur, scope }) {
   );
 }
 
-function ScenarioTable({ fit, cur }) {
+// `scope` is REQUIRED, not optional. The disclosure below names the report
+// window to contrast it against the model's training window, and that contrast
+// is the whole point of the panel — a baseline is only honest if you can see
+// which dates it is NOT. Rendering without it threw `scope is not defined` and
+// took the entire app shell down with it.
+function ScenarioTable({ fit, cur, scope }) {
   const rows = fit.scenarios || [];
   if (!rows.length) return null;
   const anyBudget = rows.some((s) => s.implied_daily_budget != null);
