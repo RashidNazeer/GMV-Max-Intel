@@ -21,6 +21,7 @@
 // and loudest thing on the page. It is now one flat region at the bottom: the
 // four figures as a definition list, one sentence about the daily exceptions,
 // and the individual dates behind a disclosure.
+import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -67,6 +68,40 @@ const CHANNELS = [
   { key: 'card',    field: 'product_card_gmv',         label: 'Product card',                    short: 'Product card',
     colour: 'var(--series-card)',    hint: COPY.seg.card,     classified: false, ofAffiliate: false },
 ];
+
+/**
+ * ONE share basis at a time, explicitly chosen.
+ *
+ * The table carried all three denominators side by side, so reading a single
+ * row meant deciding which of three percentages answered your question — and
+ * two of them are undefined for some channels, printing a dash that looks like
+ * missing data rather than "this share is meaningless here". A denominator is a
+ * question; you ask one at a time.
+ */
+const BASES = {
+  total: {
+    label: 'Of total shop GMV',
+    value: (d) => d.total,
+    why: 'every channel is part of it, so every row has a meaningful share',
+  },
+  affiliate: {
+    label: 'Of affiliate GMV',
+    value: (d) => d.affiliate,
+    why: "Seller Center's affiliate video figure — only affiliate rows have a share of it",
+  },
+  classified: {
+    label: 'Of classified affiliate',
+    value: (d) => d.classified,
+    why: 'only the lines carrying a commission signal',
+  },
+};
+
+/** A dash here means "this share would not mean anything", not "unknown". */
+function shareIn(seg, basis, d) {
+  if (basis === 'affiliate') return d.affiliate && seg.ofAffiliate ? pct(seg.value / d.affiliate, 1) : '—';
+  if (basis === 'classified') return d.classified && seg.classified ? pct(seg.value / d.classified, 1) : '—';
+  return d.total ? pct(seg.value / d.total, 1) : '—';
+}
 
 const Swatch = ({ colour }) => (
   <i aria-hidden="true" style={{
@@ -239,6 +274,8 @@ export default function AttributionPage() {
  * is about, rather than as a full-width paragraph nobody read.
  */
 function RevenueMix({ a, cur }) {
+  // Default to the one denominator every row has a meaningful share of.
+  const [basis, setBasis] = useState("total");
   const total = Number(a.total_gmv) || 0;
   const affiliate = Number(a.affiliate_video_sc_gmv) || 0;
   const classified = (Number(a.measured_paid_gmv) || 0) + (Number(a.measured_organic_gmv) || 0);
@@ -257,8 +294,20 @@ function RevenueMix({ a, cur }) {
   return (
     <Panel
       title="Revenue mix"
-      sub="Amounts, and each share against the denominator it belongs to — three different denominators, each named in its column."
+      sub={`Amounts, and each channel's share ${BASES[basis].label.toLowerCase()}.`}
       bodyPad={false}
+      right={(
+        <div className="row" style={{ gap: 4 }}>
+          <span className="meta">Share of</span>
+          {Object.entries(BASES).map(([k, b]) => (
+            <button key={k} className={`btn btn-sm${basis === k ? " btn-primary" : ""}`}
+              aria-pressed={basis === k} onClick={() => setBasis(k)}
+              title={`Denominator: ${moneyExact(b.value({ total, affiliate, classified }), cur)} — ${b.why}`}>
+              {b.label.replace(/^Of /, "")}
+            </button>
+          ))}
+        </div>
+      )}
     >
       <div className="panel-body stack">
         {/* PROTECTED SENTENCE — meaning and certainty preserved. */}
@@ -291,15 +340,8 @@ function RevenueMix({ a, cur }) {
               <th className="sticky-l">Channel</th>
               <th className="num">Amount</th>
               <th className="num">
-                Of total shop GMV<Hint text={`Denominator: ${moneyExact(total, cur)}`} />
-              </th>
-              <th className="num">
-                Of affiliate GMV
-                <Hint text={`Denominator: ${moneyExact(affiliate, cur)} — Seller Center's affiliate video figure`} />
-              </th>
-              <th className="num">
-                Of classified affiliate
-                <Hint text={`Denominator: ${moneyExact(classified, cur)} — only the lines carrying a commission signal`} />
+                {BASES[basis].label}
+                <Hint text={`Denominator: ${moneyExact(BASES[basis].value({ total, affiliate, classified }), cur)} — ${BASES[basis].why}`} />
               </th>
             </tr>
           </thead>
@@ -314,9 +356,7 @@ function RevenueMix({ a, cur }) {
                   </span>
                 </td>
                 <td className="num"><strong>{moneyExact(s.value, cur)}</strong></td>
-                <td className="num muted">{total ? pct(s.value / total, 1) : '—'}</td>
-                <td className="num muted">{affiliate && s.ofAffiliate ? pct(s.value / affiliate, 1) : '—'}</td>
-                <td className="num muted">{classified && s.classified ? pct(s.value / classified, 1) : '—'}</td>
+                <td className="num muted">{shareIn(s, basis, { total, affiliate, classified })}</td>
               </tr>
             ))}
             <tr>
@@ -327,9 +367,7 @@ function RevenueMix({ a, cur }) {
                 </span>
               </td>
               <td className="num"><strong>{moneyExact(a.component_total, cur)}</strong></td>
-              <td className="num"><strong>{total ? pct(Number(a.component_total) / total, 1) : '—'}</strong></td>
-              <td className="num muted">—</td>
-              <td className="num muted">—</td>
+              <td className="num"><strong>{basis === 'total' && total ? pct(Number(a.component_total) / total, 1) : '—'}</strong></td>
             </tr>
             <tr>
               <td className="sticky-l">
@@ -339,9 +377,7 @@ function RevenueMix({ a, cur }) {
                 </span>
               </td>
               <td className="num">{moneyExact(total, cur)}</td>
-              <td className="num muted">100.0%</td>
-              <td className="num muted">—</td>
-              <td className="num muted">—</td>
+              <td className="num muted">{basis === 'total' ? '100.0%' : '—'}</td>
             </tr>
 
             {/* BELOW THE LINE. Everything above sums; nothing here does. The
@@ -350,7 +386,7 @@ function RevenueMix({ a, cur }) {
             {diagnostics.length > 0 && (
               <>
                 <tr>
-                  <td colSpan={5} style={{
+                  <td colSpan={3} style={{
                     height: 34, verticalAlign: 'bottom', paddingBottom: 4,
                     borderTop: '2px solid var(--divider)',
                   }}>
@@ -367,13 +403,11 @@ function RevenueMix({ a, cur }) {
                       </span>
                     </td>
                     <td className="num">{moneyExact(s.value, cur)}</td>
-                    <td className="num muted">—</td>
-                    <td className="num muted">{affiliate && s.ofAffiliate ? pct(s.value / affiliate, 1) : '—'}</td>
-                    <td className="num muted">—</td>
+                    <td className="num muted">{shareIn(s, basis, { total, affiliate, classified })}</td>
                   </tr>
                 ))}
                 <tr>
-                  <td colSpan={5} className="meta" style={{ paddingBottom: 10, whiteSpace: 'normal' }}>
+                  <td colSpan={3} className="meta" style={{ paddingBottom: 10, whiteSpace: 'normal' }}>
                     This amount is already counted inside Ad-driven and Organic above — it is the extent to
                     which our own affiliate line data exceeds Seller Center's affiliate figure, not extra
                     revenue. Adding it to the components would report the same money twice.

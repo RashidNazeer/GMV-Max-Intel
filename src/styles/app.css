@@ -429,6 +429,18 @@ table.data.fixed { table-layout: fixed; }
 .dl dt { color: var(--text-2); margin: 0; }
 .dl dd { margin: 0; }
 
+/* ACROSS, NOT DOWN. Four campaign settings — status, type, Target ROI, daily
+   budget — stacked into four rows and pushed the performance a buyer came for
+   below the fold. They are four short facts and belong on one line, wrapping
+   to two columns when the width is not there rather than always stacking. */
+.dl-inline {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--s3) var(--s5); font-size: 13px;
+}
+.dl-inline dt { color: var(--text-2); margin: 0 0 2px; }
+.dl-inline dd { margin: 0; font-weight: 600; font-size: 14px; }
+.dl-inline > div { min-width: 0; }
+
 .center { min-height: 100vh; display: grid; place-items: center; padding: var(--s6); }
 .login { width: 100%; max-width: 380px; }
 

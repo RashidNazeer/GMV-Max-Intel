@@ -452,7 +452,24 @@ export const Trend = ({ value, hasBaseline, measurable = true }) => {
   const v = Number(value);
   const cls = v > 0.02 ? 'trend-up' : v < -0.02 ? 'trend-down' : 'muted';
   const mark = v > 0.02 ? '▲' : v < -0.02 ? '▼' : '';
-  return <span className={cls}>{mark} {v > 0 ? '+' : ''}{(v * 100).toFixed(0)}%</span>;
+  // THE THRESHOLD, EXPLAINED WHERE THE APPARENT CONTRADICTION IS.
+  //
+  // A video down 23% is not labelled Declining, because that status needs 30%.
+  // On screen that reads as the app disagreeing with its own arrow, so the
+  // number itself carries the reason rather than leaving the reader to infer a
+  // bug. Only where it is genuinely ambiguous: a fall short of the bar, or a
+  // rise short of it.
+  const shortOfBar = v <= -0.02 && v > -0.30
+    ? `Down ${Math.abs(v * 100).toFixed(0)}%, which is a real fall but short of the 30% needed for Declining GMV. The status band and the arrow measure the same thing at different thresholds.`
+    : v >= 0.02 && v < 0.30
+      ? `Up ${(v * 100).toFixed(0)}%, short of the 30% needed for Rising.`
+      : undefined;
+  return (
+    <span className={cls} title={shortOfBar}>
+      {mark} {v > 0 ? '+' : ''}{(v * 100).toFixed(0)}%
+      {shortOfBar && <span className="muted" aria-hidden="true"> ·</span>}
+    </span>
+  );
 };
 
 export { money, moneyExact, pct, numOrNull, fixed };

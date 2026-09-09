@@ -280,13 +280,21 @@ export default function OutreachPage() {
               date, so switching the report from 7 days to 60 changes every
               other page and leaves this shortlist identical. Saying so here is
               cheaper than letting someone discover it by not noticing. */}
-          <p className="meta" style={{ margin: '10px 0 0', maxWidth: '78ch' }}>
-            <strong>Targeting basis:</strong> {basis.recentStart} → {basis.recentEnd} against{' '}
-            {basis.priorStart} → {basis.priorEnd} — a fixed {TARGETING_DAYS}-day pair anchored to the
-            report <em>end</em> date. The report length in the toolbar
-            {scope.custom ? '' : ` (currently ${scope.days} days)`} does not change this list; only moving
-            the end date does.
-          </p>
+          {/* A LINE, not a paragraph. The dates are the part that gets read;
+              why the toolbar does not move them is worth one click, not four
+              lines above the list on every visit. */}
+          <details className="meta" style={{ margin: '10px 0 0' }}>
+            <summary style={{ cursor: 'pointer' }}>
+              <strong>Targeting:</strong> {basis.recentStart} → {basis.recentEnd} vs{' '}
+              {basis.priorStart} → {basis.priorEnd} · fixed {TARGETING_DAYS} days
+            </summary>
+            <p style={{ margin: '6px 0 0', maxWidth: '78ch' }}>
+              A fixed {TARGETING_DAYS}-day pair anchored to the report <em>end</em> date. The report length
+              in the toolbar{scope.custom ? '' : ` (currently ${scope.days} days)`} does not change this
+              list — only moving the end date does. Creator growth is measured over a consistent window so
+              a shortlist stays comparable between reports of different lengths.
+            </p>
+          </details>
 
           {/* An automation belongs to one shop. Inviting someone who grew for a
               different shop is legitimate, but it is a colder ask than inviting

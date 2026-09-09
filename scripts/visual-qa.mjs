@@ -10,9 +10,19 @@
 // The review asked for exactly this and I could not do it. Now it runs.
 //
 // ── WHAT IT REFUSES TO DO ──────────────────────────────────────────────────
-// It never clicks anything on Outreach that could contact a creator, and it
-// never marks a recommendation applied against real data without putting the
-// status back. QA that changes the world is not QA.
+// It never clicks anything on Outreach that could contact a creator. Nothing
+// here can create, start or send an invitation.
+//
+// ── ONE THING IT DOES CHANGE, AND CANNOT UNDO ──────────────────────────────
+// This file used to promise it "never marks a recommendation applied against
+// real data without putting the status back". That promise is no longer
+// keepable and pretending otherwise would be worse than dropping it.
+// `recommendation_events` is append-only by design — the table refuses DELETE,
+// which is the property an audit trail exists for — so a decision recorded
+// here is permanent. The decision check therefore RECORDS ONE REAL DECISION on
+// the active shop, and adapts to the state it finds rather than resetting it.
+// It records a decision; it never claims a setting was changed in TikTok, and
+// nothing in this app can do that anyway.
 //
 //   node scripts/visual-qa.mjs [baseUrl]
 import fs from 'node:fs';
@@ -459,20 +469,106 @@ if (await campLink.count()) {
 }
 
 // Mark planned, reload, confirm it stuck — then put it back.
+// ── a decision survives a reload ───────────────────────────────────────────
+// THIS CHECK PRINTED "skipped" ON EVERY RUN WHILE THE FEATURE WAS DEAD.
+//
+// It looked for "Mark planned" on the Overview page. That button renders only
+// inside RecommendationDrawer, so the locator never matched, the branch fell to
+// an else that printed "(no actionable recommendation to plan — skipped)", and
+// a totally non-functional decision workflow passed QA for a week. The drawer
+// must be opened first, and a missing button is now a FAILURE rather than a
+// polite note — a check that cannot fail is not a check.
 console.log('\n── a decision survives a reload ──');
 await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(5500);
-const planBtn = page.locator('button:has-text("Mark planned")').first();
-if (await planBtn.count()) {
-  await planBtn.click();
-  await page.waitForTimeout(3000);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(5500);
-  const after = await page.evaluate(() => document.body.innerText);
-  check('marking planned survives a full reload', /Planned/.test(after));
-  await page.screenshot({ path: path.join(OUT, 'journey--planned-persisted.png') });
+await waitForData(page);
+
+const evidenceBtn = page.locator('button:has-text("View evidence")').first();
+if (!(await evidenceBtn.count())) {
+  check('the drawer can be opened to record a decision', false,
+    'no "View evidence" button — there is no recommendation on this shop/window');
 } else {
-  console.log('  (no actionable recommendation to plan — skipped)');
+  await evidenceBtn.click();
+  await page.waitForTimeout(1200);
+
+  // THE STATE FROM THE LAST RUN IS REAL AND PERMANENT, so this adapts to it
+  // rather than assuming a fresh `proposed` row. A previous run's decision is
+  // itself evidence the loop works — but only if the drawer now shows it and
+  // still offers the NEXT step, so a recommendation cannot become a dead end
+  // once decided. Either way the drawer must offer more than Close, which is
+  // the defect this check exists for.
+  const drawerText = await page.locator('.drawer').first().innerText().catch(() => '');
+  const already = /Recorded\s+(Accepted|Applied|Rejected|Deferred)/i.test(drawerText);
+  const acceptBtn = page.locator('.drawer button:has-text("Accept and plan")').first();
+  const anyDecision = await page.locator(
+    '.drawer button:has-text("Accept and plan"), .drawer button:has-text("Record as applied"), '
+    + '.drawer button:has-text("Defer"), .drawer button:has-text("Reject")',
+  ).count();
+
+  check('the drawer offers a decision, not just Close', anyDecision > 0,
+    `no decision control in the drawer (already decided: ${already})`);
+  if (already) {
+    console.log('  (a previous run recorded a decision on this shop — the log is append-only, so it stands)');
+    check('an already-decided recommendation shows what was decided',
+      /Recorded/i.test(drawerText), drawerText.slice(0, 100));
+
+    // THE RELOAD ASSERTION MUST RUN EVERY TIME, not only on the first run that
+    // happened to find a fresh `proposed` row. Persistence is the property the
+    // whole feature exists for, and "0 rows in production" looked exactly like
+    // this from the browser: the click worked, the state vanished. Once this
+    // shop is decided the accept path below never executes again, so the
+    // durability check is made here too, against whatever state exists.
+    const before = (drawerText.match(/Recorded\s+(\w+)/i) || [])[1] || '';
+    await page.keyboard.press('Escape');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForData(page);
+    await page.locator('button:has-text("View evidence")').first().click();
+    await page.waitForTimeout(1200);
+    const afterText = await page.locator('.drawer').first().innerText().catch(() => '');
+    check(`the recorded decision (${before || 'unknown'}) survives a full reload`,
+      new RegExp(`Recorded\\s+${before}`, 'i').test(afterText),
+      afterText.slice(0, 140) || 'the drawer did not reopen');
+    await page.keyboard.press('Escape');
+  }
+
+  if (await acceptBtn.count()) {
+    await acceptBtn.click();
+    // The write goes to Supabase, so poll for the recorded state rather than
+    // guessing a duration.
+    let recorded = false;
+    for (let i = 0; i < 25 && !recorded; i++) {
+      await page.waitForTimeout(400);
+      recorded = /Recorded\s+Accepted|Planned/i.test(await page.evaluate(() => document.body.innerText));
+    }
+    check('accepting records the decision', recorded, 'no "Recorded Accepted" / "Planned" appeared');
+    await page.screenshot({ path: path.join(OUT, 'journey--decision-recorded.png') });
+
+    // THE WHOLE POINT: it must still be there after a full reload. This is what
+    // "0 rows in production" looked like from the browser — the button worked,
+    // the state vanished.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForData(page);
+    const afterReload = await page.evaluate(() => document.body.innerText);
+    check('and it survives a full reload — the point of the whole feature',
+      /planned/i.test(afterReload), 'the decision did not persist');
+    await page.screenshot({ path: path.join(OUT, 'journey--planned-persisted.png') });
+
+    // A reject with no reason must be refused, in the UI as well as the server.
+    await page.locator('button:has-text("View evidence")').first().click();
+    await page.waitForTimeout(1000);
+    const rejectBtn = page.locator('.drawer button:has-text("Reject")').first();
+    if (await rejectBtn.count()) {
+      await rejectBtn.click();
+      await page.waitForTimeout(600);
+      const confirm = page.locator('.drawer button:has-text("Reject it")').first();
+      check('a rejection with no reason cannot be submitted',
+        (await confirm.count()) > 0 && !(await confirm.isEnabled()),
+        'the Reject it button was enabled with an empty reason');
+      const drawerText = await page.locator('.drawer').first().innerText().catch(() => '');
+      check('and the form says a reason is required', /reason is required/i.test(drawerText),
+        drawerText.slice(0, 120));
+    }
+    await page.keyboard.press('Escape');
+  }
 }
 
 // ── switching shop must not leave the previous shop on screen ───────────────
@@ -656,9 +752,30 @@ check('the commission input is inside the viewport when shown',
 // The shortlist is a fixed 30-vs-30 pair anchored to the report END date. The
 // report-length buttons do not move it, and the page has to say so — otherwise
 // someone switches to 60 days and believes the targeting widened with it.
-check('outreach labels its targeting basis separately from the report control',
-  /targeting basis/i.test(outreachText) && /does not change this list/i.test(outreachText),
-  'no targeting-basis sentence on the page');
+// THE REQUIREMENT CHANGED, so this assertion changed with it — deliberately,
+// not to turn a red build green. The first spec asked for the targeting basis
+// to be stated; the follow-up audit asked for "a short visible targeting-period
+// line and details" instead of the paragraph that produced. Collapsed <details>
+// content is absent from innerText by design, so asserting the long sentence is
+// visible would now be asserting the screen the owner asked us to stop building.
+//
+// What must still be true, and is what this checks: the DATES are visible
+// without interaction, and the explanation of why the toolbar does not move
+// them is present in the DOM one click away.
+const targeting = await page.evaluate(() => {
+  const sums = [...document.querySelectorAll('details summary')];
+  const s = sums.find((x) => /targeting/i.test(x.innerText));
+  if (!s) return null;
+  // textContent, NOT innerText: a collapsed <details> hides its body from
+  // innerText by design, which is the whole point of collapsing it.
+  return { summary: s.innerText, detail: s.parentElement.textContent };
+});
+check('outreach shows its targeting period without interaction',
+  !!targeting && /\d{4}-\d{2}-\d{2}.*\d{4}-\d{2}-\d{2}/s.test(targeting.summary),
+  targeting ? targeting.summary.slice(0, 90) : 'no targeting summary on the page');
+check('and explains that the report control does not move it',
+  !!targeting && /does not change this list/i.test(targeting.detail),
+  'the explanation is missing even from the expanded detail');
 
 // A DRAFT MUST NOT CROSS SHOPS. Ticking a product checkbox contacts nobody —
 // it is local state — so this is inside the "never send" rule. The defect it

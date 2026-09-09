@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { setRecommendationStatus } from '../lib/api.js';
+import { recordDecision } from '../lib/api.js';
 import { ACTION, actionLabel } from '../lib/decide.js';
 import { Drawer, Notice, SourceTag, Panel, money, pct } from './ui.jsx';
 
@@ -242,30 +242,33 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
  */
 function Lifecycle({ rec, decision, persist }) {
   const qc = useQueryClient();
-  const [applying, setApplying] = useState(false);
+  const [mode, setMode] = useState(null);        // 'apply' | 'modify' | 'reject' | 'defer'
   const [actual, setActual] = useState('');
+  const [note, setNote] = useState('');
+  const [until, setUntil] = useState('');
+
+  const reset = () => { setMode(null); setActual(''); setNote(''); setUntil(''); };
 
   const mut = useMutation({
-    // Create the record if it does not exist yet, then move it. Persisting is
-    // idempotent by fingerprint, so a double submission cannot make two tests.
-    mutationFn: async ({ status, actualValue, reason }) => {
+    // Create the record if it does not exist yet, then record the decision.
+    // record_recommendation() is idempotent by fingerprint and record_decision()
+    // collapses an identical repeat, so a double submission cannot make two of
+    // either. Both are enforced server-side; the disabled button is a
+    // convenience, not the guarantee.
+    mutationFn: async ({ decision: d, status, appliedValue, appliedKnown, deferUntil, reason }) => {
       const target = rec || (persist ? await persist() : null);
       if (!target) throw new Error('This recommendation could not be saved, so it cannot be recorded.');
-      return setRecommendationStatus(target, status, { actualValue, reason });
+      return recordDecision(target.id, d, {
+        note: reason || null,
+        status: status || null,
+        appliedValue: appliedValue ?? null,
+        appliedKnown: appliedKnown ?? null,
+        deferUntil: deferUntil || null,
+      });
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recs'] }); setApplying(false); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recs'] }); reset(); },
   });
 
-  // THE DRAWER'S ONLY BUTTON WAS CLOSE.
-  //
-  // This returned null whenever the recommendation had not yet been saved —
-  // which is always true on campaign detail, because that page reads stored
-  // records but never writes one. So the drawer described a test the operator
-  // had no way to record, while campaign History promised that marking one
-  // applied would record it. The workflow could not be completed from the
-  // place it was described.
-  //
-  // The record is now created on demand, at the moment the operator acts.
   if (!rec && !persist) {
     return (
       <section>
@@ -278,53 +281,173 @@ function Lifecycle({ rec, decision, persist }) {
     );
   }
 
+  // WHAT YOU DECIDED AND WHERE IT GOT TO ARE DIFFERENT FACTS.
+  //
+  // `decision` is the judgement — accept, modify, reject, defer. `status` is the
+  // lifecycle — proposed, planned, applied, dismissed. One column carried both,
+  // which is why neither could be read back honestly: a rejected proposal and an
+  // applied-then-reverted test are not points on one line.
+  const decided = rec?.decision || null;
+  const status = rec?.status || 'proposed';
+  const open = status === 'proposed' || status === 'planned';
+
+  // A numeric box only means something for an action that HAS a value.
+  // review_creative, fix_data, hold and insufficient_data all carry value_unit
+  // null, and the old form offered a number field for every one of them — so the
+  // shop's most common recommendation could not be recorded coherently.
+  const numeric = decision?.value_unit != null;
+
+  const act = (label, args, primary) => (
+    <button className={primary ? 'btn btn-primary' : 'btn'}
+      disabled={mut.isPending || ((args.decision === 'reject' || args.decision === 'defer') && !note.trim())
+        || (args.decision === 'defer' && !until)}
+      onClick={() => mut.mutate(args)}>{label}</button>
+  );
+
   return (
     <section>
       <h3 className="section-title">Your decision</h3>
+
+      {decided && (
+        <p className="meta" style={{ margin: '8px 0 0' }}>
+          Recorded <strong>{DECISION_LABEL[decided] || decided}</strong>
+          {rec.decision_at ? ` on ${new Date(rec.decision_at).toLocaleDateString()}` : ''}
+          {rec.decision_note ? ` — ${rec.decision_note}` : ''}
+          {rec.defer_until ? ` · back on ${rec.defer_until}` : ''}
+        </p>
+      )}
+
       <div className="row" style={{ marginTop: 8 }}>
-        {(!rec || rec.status === 'proposed') && (
-          <>
-            <button className="btn" disabled={mut.isPending} onClick={() => mut.mutate({ status: 'planned' })}>Mark planned</button>
-            <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
-            <button className="btn btn-quiet" disabled={mut.isPending}
-              onClick={() => mut.mutate({ status: 'dismissed', reason: 'dismissed from evidence drawer' })}>Dismiss</button>
-          </>
-        )}
-        {rec?.status === 'planned' && (
-          <>
-            <span className="status status-accent">Planned</span>
-            <button className="btn" onClick={() => setApplying(true)}>Mark applied</button>
-          </>
-        )}
-        {rec?.status === 'applied' && (
+        {status === 'planned' && <span className="status status-accent">Planned</span>}
+        {status === 'applied' && (
           <span className="status status-ok">
-            Applied{rec?.applied_value != null ? ` at ${rec.applied_value}` : ''}
+            Applied{appliedLabel(rec)}
             {rec?.applied_at ? ` · ${new Date(rec.applied_at).toLocaleDateString()}` : ''}
           </span>
         )}
+        {status === 'dismissed' && <span className="status status-info">Dismissed</span>}
+
+        {open && !mode && (
+          <>
+            {status === 'proposed'
+              && act('Accept and plan', { decision: 'accept', status: 'planned' }, true)}
+            <button className="btn" onClick={() => setMode('apply')}>Record as applied</button>
+            {numeric && (
+              <button className="btn" onClick={() => setMode('modify')}>Applied a different value</button>
+            )}
+            <button className="btn" onClick={() => setMode('defer')}>Defer</button>
+            <button className="btn btn-quiet" onClick={() => setMode('reject')}>Reject</button>
+          </>
+        )}
       </div>
 
-      {applying && (
+      {(mode === 'apply' || mode === 'modify') && (
         <div className="panel" style={{ padding: 12, marginTop: 12 }}>
           <p className="meta" style={{ margin: '0 0 8px', lineHeight: '18px' }}>
-            This records a change you have already made in TikTok. It does not change any setting —
-            nothing in this tool can. Enter the value you actually set.
+            <strong>This records a change you have already made in TikTok.</strong> It does not change any
+            setting — nothing in this tool can.
+            {numeric
+              ? ' Enter the value you actually set, or leave it blank if you would rather not state one.'
+              : ' This action has no numeric setting, so there is no value to enter.'}
           </p>
           <div className="row">
-            <input className="input" style={{ width: 140 }} value={actual}
-              placeholder={decision.suggested_value != null ? Number(decision.suggested_value).toFixed(2) : 'value set'}
-              onChange={(e) => setActual(e.target.value)} />
-            <button className="btn btn-primary" disabled={mut.isPending}
-              onClick={() => mut.mutate({ status: 'applied', actualValue: actual === '' ? null : Number(actual) })}>
-              Record it
-            </button>
-            <button className="btn btn-quiet" onClick={() => setApplying(false)}>Cancel</button>
+            {numeric && (
+              <input className="input" style={{ width: 140 }} value={actual}
+                aria-label="Value actually set"
+                placeholder={decision?.suggested_value != null ? Number(decision.suggested_value).toFixed(2) : 'value set'}
+                onChange={(e) => setActual(e.target.value)} />
+            )}
+            <input className="input" style={{ flex: '1 1 220px', minWidth: 0 }} value={note}
+              aria-label="Note" placeholder="Note (optional)"
+              onChange={(e) => setNote(e.target.value)} />
+            {act('Record it', {
+              // "Applied a different value" is a MODIFY, not an accept: the
+              // operator did something other than what was proposed, and the log
+              // should be able to say which without the reader inferring it.
+              decision: mode === 'modify' ? 'modify' : 'accept',
+              status: 'applied',
+              appliedValue: numeric && actual !== '' ? Number(actual) : null,
+              // false = applied, value not stated. Distinct from "not applied"
+              // (null) and from "applied at zero" (0).
+              appliedKnown: numeric ? actual !== '' : false,
+              reason: note,
+            }, true)}
+            <button className="btn btn-quiet" onClick={reset}>Cancel</button>
           </div>
         </div>
       )}
 
-      {mut.error && <p className="meta" style={{ color: 'var(--error)' }}>{mut.error.message}</p>}
+      {(mode === 'reject' || mode === 'defer') && (
+        <div className="panel" style={{ padding: 12, marginTop: 12 }}>
+          <p className="meta" style={{ margin: '0 0 8px', lineHeight: '18px' }}>
+            {mode === 'defer'
+              ? 'A deferral records when it comes back, so it returns rather than quietly disappearing.'
+              : 'A reason is required. Six months from now the reason is the only part of this still worth reading.'}
+          </p>
+          <div className="row" style={{ marginBottom: 8, gap: 4 }}>
+            {REASONS[mode].map((r) => (
+              <button key={r} className={`btn btn-sm${note === r ? ' btn-primary' : ''}`}
+                onClick={() => setNote(r)}>{r}</button>
+            ))}
+          </div>
+          <div className="row">
+            <input className="input" style={{ flex: '1 1 240px', minWidth: 0 }} value={note}
+              aria-label="Reason" placeholder="Reason"
+              onChange={(e) => setNote(e.target.value)} />
+            {mode === 'defer' && (
+              <input className="input" type="date" style={{ width: 170 }} value={until}
+                aria-label="Come back on" onChange={(e) => setUntil(e.target.value)} />
+            )}
+            {act(mode === 'defer' ? 'Defer it' : 'Reject it', {
+              decision: mode,
+              status: mode === 'reject' ? 'dismissed' : null,
+              deferUntil: mode === 'defer' ? until : null,
+              reason: note,
+            }, true)}
+            <button className="btn btn-quiet" onClick={reset}>Cancel</button>
+          </div>
+          {/* The server refuses both of these as well. Saying so here explains
+              the disabled button instead of leaving it inert and unexplained. */}
+          {!note.trim() && <p className="meta" style={{ margin: '6px 0 0' }}>A reason is required.</p>}
+          {mode === 'defer' && !until && (
+            <p className="meta" style={{ margin: '2px 0 0' }}>A return date is required.</p>
+          )}
+        </div>
+      )}
+
+      {mut.error && (
+        <p className="meta" style={{ color: 'var(--error)', marginTop: 8 }}>{mut.error.message}</p>
+      )}
     </section>
   );
 }
 
+/** "Applied at 0" and "applied, value not stated" are different claims. */
+function appliedLabel(rec) {
+  if (rec?.applied_value_known === false) return ' — value not stated';
+  return rec?.applied_value != null ? ` at ${rec.applied_value}` : '';
+}
+
+const DECISION_LABEL = {
+  accept: 'Accepted',
+  modify: 'Applied a different value',
+  reject: 'Rejected',
+  defer: 'Deferred',
+};
+
+// The doc's own list, kept short. The free-text box beside it means a reason
+// that is not on the list is still recordable rather than forced into one.
+const REASONS = {
+  reject: [
+    'Diagnosis does not match the account',
+    'Evidence incomplete',
+    'Action already taken elsewhere',
+    'Creative not eligible',
+  ],
+  defer: [
+    'Promotion scheduled',
+    'Spending cap',
+    'Stock constraint',
+    'Waiting for data',
+  ],
+};

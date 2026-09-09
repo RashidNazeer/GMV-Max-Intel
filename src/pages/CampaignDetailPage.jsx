@@ -169,44 +169,61 @@ export default function CampaignDetailPage() {
         sub="Read from this campaign's own record. The performance figures below it are not — they are shop-level."
         right={simulated ? <SourceTag kind="simulated" /> : null}
       >
-        <dl className="dl">
-          <dt>Status</dt>
-          <dd>
-            <span className={`status status-${active ? 'ok' : 'info'}`}>{active ? 'Active' : 'Inactive'}</span>
-          </dd>
-
-          <dt>Type</dt>
-          <dd>
-            {/^PRODUCT/.test(campaign.campaign_type || '')
-              ? 'Product GMV Max'
-              : campaign.campaign_type || <Unavailable reason="Reacher reports no campaign type for this campaign." />}
-          </dd>
-
-          <dt>
-            Target ROI{' '}
-            <Hint text="A delivery setting: how hard GMV Max bids. It is not the brand's break-even target." />
-          </dt>
-          <dd>
-            {campaign.target_roas == null
-              ? <Unavailable reason="No Target ROI is set on this campaign." />
-              : Number(campaign.target_roas).toFixed(2)}
-          </dd>
-
-          <dt>Daily budget</dt>
-          <dd>
-            {campaign.daily_budget == null
-              ? <Unavailable reason="No daily budget is set on this campaign." />
-              : money(campaign.daily_budget, cur)}
-          </dd>
+        {/* One row, wrapping. Four short facts do not need four rows — stacking
+            them pushed the performance a buyer came for below the fold. */}
+        <dl className="dl-inline">
+          <div>
+            <dt>Status</dt>
+            <dd>
+              <span className={`status status-${active ? 'ok' : 'info'}`}>{active ? 'Active' : 'Inactive'}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Type</dt>
+            <dd>
+              {/^PRODUCT/.test(campaign.campaign_type || '')
+                ? 'Product GMV Max'
+                : campaign.campaign_type || <Unavailable reason="Reacher reports no campaign type for this campaign." />}
+            </dd>
+          </div>
+          <div>
+            <dt>
+              Target ROI{' '}
+              <Hint text="A delivery setting: how hard GMV Max bids. It is not the brand's break-even target." />
+            </dt>
+            <dd>
+              {campaign.target_roas == null
+                ? <Unavailable reason="No Target ROI is set on this campaign." />
+                : Number(campaign.target_roas).toFixed(2)}
+            </dd>
+          </div>
+          <div>
+            <dt>Daily budget</dt>
+            <dd>
+              {campaign.daily_budget == null
+                ? <Unavailable reason="No daily budget is set on this campaign." />
+                : money(campaign.daily_budget, cur)}
+            </dd>
+          </div>
         </dl>
       </Panel>
 
-      {/* The provider limit, as one sentence instead of a full-width paragraph. */}
-      <Notice tone="info">
-        Reacher exposes spend per campaign but not revenue per campaign, so every return below — and the
-        recommendation behind it — is reasoned at <strong>shop scope</strong>, across all campaigns, and a
-        campaign-specific marginal return is not computable today.
-      </Notice>
+      {/* A SCOPE LINE, with the explanation one click away.
+          This was a full-width notice above the numbers on every visit. The
+          limitation is real and permanent, but a paragraph re-read daily stops
+          being read at all — the scope belongs beside the figures it qualifies,
+          and the reasoning belongs behind a disclosure. */}
+      <details className="meta" style={{ margin: '-4px 0 0' }}>
+        <summary style={{ cursor: 'pointer' }}>
+          Returns below are <strong>shop-level</strong>, across all campaigns — not this campaign alone.
+        </summary>
+        <p style={{ margin: '6px 0 0', maxWidth: '78ch' }}>
+          Reacher exposes spend per campaign but not revenue per campaign, so a campaign-specific return
+          cannot be computed today. Splitting shop revenue across campaigns by their share of spend would
+          produce a number for every campaign and evidence for none, so it is not done. The campaign
+          settings above ARE this campaign's own.
+        </p>
+      </details>
 
       <MetricSummary items={shopMetrics} source={basis} />
 
@@ -321,8 +338,8 @@ function Performance({ facts, cur, scope }) {
 
   return (
     <Panel
-      title="Spend against what moved"
-      sub="Shop-level, all campaigns. Total shop GMV is what a spend decision is really about, so GMV Max's own figure is shown beside it, not instead of it."
+      title="Performance"
+      sub="Daily spend against total shop GMV, shop-level. GMV Max's own figure is shown beside it, not instead of it — a spend decision is about whether the shop grows."
     >
       <div style={{ height: 300 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -646,15 +663,36 @@ function EvidenceTab({ decision, facts }) {
         )}
       </Panel>
 
-      <Panel title="Model diagnostics" sub="Kept here rather than in the buyer's default view.">
-        <dl className="dl">
-          {diagnostics.map(([k, v]) => (
-            <div key={k} style={{ display: 'contents' }}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
-            </div>
-          ))}
-        </dl>
+      {/* COLLAPSED BY DEFAULT, and it says what these numbers are NOT.
+          R-squared, model confidence, recommendation confidence and data
+          coverage sat open beside each other, four numbers between 0 and 1 that
+          look interchangeable and are not: one is fit, one is how much to trust
+          an estimate, one is how much to trust an action, one is how much of
+          the window arrived. Reading any of them as the others' answer is the
+          mistake this section is arranged to prevent. */}
+      <Panel title="Model diagnostics" bodyPad={false}>
+        <details>
+          <summary className="panel-body meta" style={{ cursor: 'pointer', paddingBottom: 12 }}>
+            Technical detail for checking the model — not a summary of how well the recommendation will work.
+          </summary>
+          <div className="panel-body" style={{ paddingTop: 0 }}>
+            <p className="meta" style={{ margin: '0 0 10px', maxWidth: '78ch' }}>
+              These are <strong>four different questions</strong> and their numbers are not comparable:
+              model fit is how closely the curve tracks observed spend; model confidence is how much to
+              trust its estimate; recommendation confidence is how much to trust <em>this action</em>;
+              data coverage is how much of the window actually arrived. A high one does not compensate
+              for a low one.
+            </p>
+            <dl className="dl">
+              {diagnostics.map(([k, v]) => (
+                <div key={k} style={{ display: 'contents' }}>
+                  <dt>{k}</dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </details>
       </Panel>
     </>
   );

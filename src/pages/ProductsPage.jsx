@@ -199,14 +199,21 @@ export default function ProductsPage() {
         if (!Number.isFinite(pg) || !Number.isFinite(sg) || sg <= 0) return null;
         const share = pg / sg;
         if (share >= 0.995) return null;
+        // ONE LINE, with the reasoning behind a disclosure. The explanation is
+        // worth keeping and is not worth three sentences above the work surface
+        // on every visit — the number is the part that is read.
         return (
-          <p className="meta" style={{ margin: '8px 0 0', maxWidth: '82ch' }}>
-            These products account for <strong>{money(pg, cur)}</strong> of the{' '}
-            <strong>{money(sg, cur)}</strong> Shop GMV in this window — <strong>{pct(share, 0)}</strong>.
-            The remaining {money(Math.max(0, sg - pg), cur)} is shop revenue with no product row in the
-            funnel feed for these dates, so it is absent from every total on this page rather than
-            distributed across the rows.
-          </p>
+          <details className="meta" style={{ margin: '8px 0 0' }}>
+            <summary style={{ cursor: 'pointer' }}>
+              Covers <strong>{pct(share, 0)}</strong> of Shop GMV — {money(pg, cur)} of {money(sg, cur)}
+            </summary>
+            <p style={{ margin: '6px 0 0', maxWidth: '78ch' }}>
+              The remaining {money(Math.max(0, sg - pg), cur)} is shop revenue with no product row in the
+              funnel feed for these dates. It is absent from every total on this page rather than
+              distributed across the rows, because attributing it would produce a number for each product
+              and evidence for none.
+            </p>
+          </details>
         );
       })()}
 
