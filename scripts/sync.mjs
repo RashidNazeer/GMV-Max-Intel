@@ -20,8 +20,26 @@ const [SUPABASE_URL, SERVICE_KEY, REACHER_API] =
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 const reacher = createReacherClient({ apiKey: REACHER_API });
 
-const START = process.argv[2] || '2026-08-07';
-const END = process.argv[3] || '2026-09-05';
+// ── A ROLLING WINDOW, NOT TWO FROZEN DATES ─────────────────────────────────
+//
+// These were hardcoded to '2026-08-07' and '2026-09-05'. Every run re-fetched
+// the same stale month no matter when it ran, so affiliate coverage could never
+// advance past 09-05 however often the sync was scheduled — and the app duly
+// reported "Affiliate orders available through 2026-09-06; report ends
+// 2026-09-07" as a data gap, when the real cause was a constant in this file.
+//
+// The end is the SETTLED cutoff, not today: Reacher's reporting day is
+// America/Los_Angeles and the most recent day or two are still moving, so
+// asking for them stores figures that change underneath the reports built on
+// them. SETTLING_DAYS is the one definition of that, shared with the app.
+//
+// Both are still overridable positionally for a backfill:
+//     node scripts/sync.mjs 2026-06-01 2026-09-01
+import { isoSettledEnd, addDays } from '../src/lib/window.js';
+
+const DEFAULT_SPAN_DAYS = 35;                       // comfortably past a 30-day report
+const END = process.argv[3] || isoSettledEnd();
+const START = process.argv[2] || addDays(END, -(DEFAULT_SPAN_DAYS - 1));
 const CHUNK = 500;
 
 console.log(`sync window ${START} → ${END}`);
