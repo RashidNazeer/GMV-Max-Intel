@@ -17,6 +17,7 @@
 // paragraph became a one-sentence notice with the reasoning behind a
 // disclosure — every field name it named is still on the page. No query, no
 // query key and no calculation moved.
+import { isActiveStatus, statusLabel } from '../lib/campaignStatus.js';
 import { useState } from 'react';
 import { useParams, useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -500,8 +501,8 @@ function Commerce({ p, cur, related, campaigns, campaignsLoading, params }) {
                       </Link>
                     </td>
                     <td>
-                      <span className={`status status-${c.status === 'ENABLE' ? 'ok' : 'info'}`}>
-                        {c.status === 'ENABLE' ? 'Active' : 'Inactive'}
+                      <span className={`status status-${isActiveStatus(c.status) ? 'ok' : 'info'}`}>
+                        {statusLabel(c.status)}
                       </span>
                     </td>
                     <td className="num">{c.target_roas == null ? '—' : Number(c.target_roas).toFixed(2)}</td>

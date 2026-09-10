@@ -22,6 +22,7 @@
 //
 // Disabled campaigns are synced too: they hold historical spend, and excluding
 // them would understate what was actually spent in the window.
+import { isActiveStatus } from '../src/lib/campaignStatus.js';
 import { createClient } from '@supabase/supabase-js';
 import { need } from './_env.mjs';
 import { createReacherClient } from '../src/lib/reacher/client.js';
@@ -161,7 +162,7 @@ for (const shop of shops) {
       rows_received: campaigns.length, rows_written: days,
     }).eq('id', run.id);
 
-    const active = campaigns.filter((c) => c.status === 'ENABLE').length;
+    const active = campaigns.filter((c) => isActiveStatus(c.status)).length;
     console.log(`${shop.shop_name.padEnd(18)} ${campaigns.length} campaigns (${active} active) · ${days} campaign-days · ${changes} setting changes`);
   } catch (e) {
     failures++;

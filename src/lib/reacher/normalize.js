@@ -7,6 +7,7 @@
 // ============================================================
 
 import { classifyTransaction, countsTowardGmv } from './classify.js';
+import { canonicalStatus } from '../campaignStatus.js';
 
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -247,7 +248,12 @@ export function normalizeCampaign(c, shopId, settings = null, dataSource = 'reac
     shop_id: shopId,
     campaign_id: str(c.campaign_id),
     campaign_name: str(c.campaign_name),
-    status: str(settings?.status ?? c.status),
+    // CANONICALISED, because the two endpoints disagree: the campaign LIST
+    // says ENABLE/DISABLE and the SETTINGS call says enabled/disabled. This
+    // line preferred settings, so real campaigns were stored lowercase while
+    // every consumer compared against the literal ENABLE — and classified
+    // every live campaign as paused. See src/lib/campaignStatus.js.
+    status: canonicalStatus(settings?.status ?? c.status),
     campaign_type: str(c.shopping_ads_type),
     product_id: str(c.product_id),
     target_roas: num(settings?.target_roas ?? c.roas_bid),

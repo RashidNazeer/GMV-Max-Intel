@@ -9,6 +9,7 @@
 //
 // It signs in as the Boss through the anon key — the same path the app takes —
 // so RLS is exercised too, not bypassed with the service role.
+import { isActiveStatus } from '../src/lib/campaignStatus.js';
 import { createClient } from '@supabase/supabase-js';
 import { env, need } from './_env.mjs';
 import { recommend, whatsWorking } from '../src/lib/recommend.js';
@@ -137,7 +138,7 @@ for (const s of shops || []) {
   ]);
   const decliningAll = [...(declining || []), ...(fatigued || [])];
 
-  const enabled = campaigns.filter((c) => c.status === 'ENABLE');
+  const enabled = campaigns.filter((c) => isActiveStatus(c.status));
   const dailyBudget = enabled.reduce((x, c) => x + (Number(c.daily_budget) || 0), 0) || null;
   const marginal = spendRows?.length
     ? fitSpendResponse(spendRows.map((d) => ({ spend: d.spend, revenue: d.total_shop_gmv })),

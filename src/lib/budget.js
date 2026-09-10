@@ -26,9 +26,11 @@
  * the configured total. That null is what stops a paused shop reporting a
  * utilisation percentage for delivery that never happened.
  */
+import { isActiveStatus } from './campaignStatus.js';
+
 export function budgetAvailability(campaigns = []) {
   const all = Array.isArray(campaigns) ? campaigns : [];
-  const enabled = all.filter((c) => c.status === 'ENABLE');
+  const enabled = all.filter((c) => isActiveStatus(c.status));
   // `|| null` also collapses an explicit 0, which is correct here: a campaign
   // set to zero cannot fund delivery, so it must not become an active budget.
   const sum = (rows) => rows.reduce((a, c) => a + (Number(c.daily_budget) || 0), 0) || null;

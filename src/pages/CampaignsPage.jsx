@@ -14,6 +14,7 @@
 // panel head, where a filter belongs — not above the page as a second heading.
 //
 // Nothing about the data changed: same queries, same keys, same arithmetic.
+import { isActiveStatus, statusLabel } from '../lib/campaignStatus.js';
 import { useMemo, useState } from 'react';
 import { useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -61,7 +62,7 @@ export default function CampaignsPage() {
       ? campaigns.filter((c) => String(c.campaign_name || c.campaign_id).toLowerCase().includes(term))
       : campaigns;
     return [...list].sort((a, b) => {
-      const active = (c) => (c.status === 'ENABLE' ? 0 : 1);
+      const active = (c) => (isActiveStatus(c.status) ? 0 : 1);
       if (active(a) !== active(b)) return active(a) - active(b);
       const budget = (c) => Number(c.daily_budget) || 0;
       if (budget(a) !== budget(b)) return budget(b) - budget(a);
@@ -225,8 +226,8 @@ export default function CampaignsPage() {
                       {tagRow(c) && <> <SourceTag kind={rowBasis(c)} /></>}
                     </td>
                     <td>
-                      <span className={`status status-${c.status === 'ENABLE' ? 'ok' : 'info'}`}>
-                        {c.status === 'ENABLE' ? 'Active' : c.status === 'DISABLE' ? 'Inactive' : c.status}
+                      <span className={`status status-${isActiveStatus(c.status) ? 'ok' : 'info'}`}>
+                        {statusLabel(c.status)}
                       </span>
                     </td>
                     <td className="muted">

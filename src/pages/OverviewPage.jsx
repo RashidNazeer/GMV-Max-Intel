@@ -10,6 +10,7 @@
 // strip, the performance chart, then the operational table. The full
 // recommendation — evidence, guardrails, suppressed alternatives — moves into a
 // drawer, with its meaning and its wording unchanged.
+import { isActiveStatus, statusLabel } from '../lib/campaignStatus.js';
 import { useEffect, useState } from 'react';
 import { useOutletContext, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -364,8 +365,8 @@ function CampaignTable({ campaigns, loading, cur, params }) {
                   </Link>
                 </td>
                 <td>
-                  <span className={`status status-${c.status === 'ENABLE' ? 'ok' : 'info'}`}>
-                    {c.status === 'ENABLE' ? 'Active' : 'Inactive'}
+                  <span className={`status status-${isActiveStatus(c.status) ? 'ok' : 'info'}`}>
+                    {statusLabel(c.status)}
                   </span>
                 </td>
                 <td className="muted">

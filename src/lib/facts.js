@@ -12,6 +12,7 @@
 // report selector controls what is DISPLAYED; the model trains on the eligible
 // history ending at the same cutoff, and both periods are shown.
 // ============================================================
+import { isActiveStatus } from './campaignStatus.js';
 import { useQuery } from '@tanstack/react-query';
 import {
   shopAttribution, shopCreativeHealth, shopTopVideos, shopProducts, shopProductStats,
@@ -93,7 +94,7 @@ export function useFacts(shop, scope) {
   const error = attrQ.error || creativeQ.error || statsQ.error;
 
   const campaigns = campaignsQ.data || [];
-  const enabled = campaigns.filter((c) => c.status === 'ENABLE');
+  const enabled = campaigns.filter((c) => isActiveStatus(c.status));
   const dailyBudget = enabled.reduce((a, c) => a + (Number(c.daily_budget) || 0), 0) || null;
   // Averaging Target ROI across campaigns would invent a setting no campaign
   // has. Only meaningful when they agree.

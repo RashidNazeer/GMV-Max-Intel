@@ -12,6 +12,7 @@
 // The large recommendation panel is gone from this page. It is the Overview's
 // job; repeating it here made a second copy of the same finding on a second
 // screen. The header carries ONE action, which opens the same evidence drawer.
+import { isActiveStatus } from '../lib/campaignStatus.js';
 import { useState } from 'react';
 import { useParams, useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -97,7 +98,7 @@ export default function CampaignDetailPage() {
 
   const stored = (recsQ.data || []).find((r) => r.fingerprint === decision?.primary?.fingerprint);
   const simulated = campaign.data_source === 'simulated';
-  const active = campaign.status === 'ENABLE';
+  const active = isActiveStatus(campaign.status);
   const r = facts.roas;
   // Two different flags, because they describe two different rows: this
   // campaign's settings record, and the shop's spend series. Stamping the
