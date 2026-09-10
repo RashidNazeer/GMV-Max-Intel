@@ -358,6 +358,13 @@ export function features(f = {}) {
     // 034). Absent until an episode exists, which is the normal state — and
     // the reason no action here may size a step from a default band.
     roiHeadroom: f.roiHeadroom || null,
+
+    // ── WHAT HAPPENED LAST TIME WE DID THIS ─────────────────────────────────
+    // Keyed by action code, from reviewed_history_summary (migration 036).
+    // Every layer before this one RECORDED; this is the first that reads back,
+    // so a change that breached a guardrail last month can raise caution on the
+    // next identical recommendation instead of being written down and forgotten.
+    reviewedHistory: f.reviewedHistory || null,
     // The diagnostic window is anchored to the CUTOFF and no longer follows the
     // report length. Both are carried so a recommendation can state which
     // window its evidence came from.
@@ -1090,7 +1097,40 @@ function score(cand, x) {
   // Confidence in the action itself.
   s += (confidence(cand) ?? 0.3) * 20;
 
+  // ── WHAT HAPPENED LAST TIME ──────────────────────────────────────────────
+  //
+  // ASYMMETRIC, ON PURPOSE. A comparable change that went badly pushes this
+  // action down hard; a comparable change that went well lifts it barely at
+  // all. That is not timidity — the two errors are not the same size. Repeating
+  // a change that breached a guardrail costs real money on a live shop;
+  // declining to repeat one that worked costs an opportunity that will come
+  // round again next week.
+  //
+  // Small numbers, deliberately. This is CASE SUPPORT, not a fitted effect: a
+  // handful of reviewed outcomes may nudge a ranking, and must never be able to
+  // overturn a failed guardrail, which costs 30 apiece above.
+  const hist = historyFor(x, cand.action);
+  if (hist) {
+    if (hist.status === 'caution_from_history') s -= 12;
+    else if (hist.status === 'supported_by_history') s += 4;
+    // single_case, all_cases_confounded and no_reviewed_history move nothing.
+    // One good result is a case, not evidence of a response.
+  }
+
   return s;
+}
+
+/**
+ * The reviewed history relevant to one action.
+ *
+ * Budget and Target ROI changes are looked up by their own action code; a
+ * direction is deliberately NOT collapsed, because "we raised it and it went
+ * badly" says little about lowering it.
+ */
+export function historyFor(x, action) {
+  const h = x?.reviewedHistory;
+  if (!h || !action) return null;
+  return h[action] || null;
 }
 
 function confidence(cand) {
@@ -1226,6 +1266,23 @@ function shape(c, x, role, suppressedList) {
     // recommendation can still be told apart from one whose number was
     // fabricated by a default band. null on actions that do not propose a value.
     candidate_basis: c.candidateBasis ?? null,
+    // WHAT PRIOR EXPERIENCE SAYS ABOUT THIS ACTION, carried on the record so
+    // the influence is visible rather than only felt in the ranking. A tool
+    // that quietly demotes an action because of last month's result, without
+    // saying so, is one an operator cannot argue with.
+    prior_cases: (() => {
+      const h = historyFor(x, c.action);
+      if (!h) return null;
+      return {
+        status: h.status,
+        cases_eligible: h.cases_eligible ?? 0,
+        favourable: h.favourable ?? 0,
+        unfavourable: h.unfavourable ?? 0,
+        reverted: h.reverted ?? 0,
+        caution: h.caution ?? null,
+        policy_version: h.policy_version ?? null,
+      };
+    })(),
     // What this action ACTS ON, what it can be expected to move, and what it
     // must not be read as promising. Carried on every recommendation so the
     // drawer, the scenario table and a stored record all say the same thing.

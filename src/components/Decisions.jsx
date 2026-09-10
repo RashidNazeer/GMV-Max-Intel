@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { recordDecision } from '../lib/api.js';
 import { ACTION, actionLabel } from '../lib/decide.js';
-import { Drawer, Notice, SourceTag, Panel, money, pct } from './ui.jsx';
+import { Drawer, Notice, SourceTag, Panel, Hint, money, pct } from './ui.jsx';
 
 const value = (v, unit, cur) => {
   if (v == null) return '—';
@@ -200,6 +200,40 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
               )}
               {p.hold_days && (<><dt>Hold at least</dt><dd>{p.hold_days} days — {p.hold_why}</dd></>)}
             </dl>
+          </section>
+        )}
+
+        {/* ── WHAT HAPPENED LAST TIME ──────────────────────────────────────
+            Shown whether or not it flatters the recommendation, and shown even
+            when it is empty. "We have done this before and it went badly" is
+            the most useful sentence this drawer can carry, and a tool that
+            demotes an action on last month's result without saying so is one
+            an operator cannot argue with. */}
+        {p.prior_cases && (
+          <section>
+            <h3 className="section-title">What happened last time</h3>
+            <p style={{ margin: '8px 0 0' }}>{p.prior_cases.caution}</p>
+            {p.prior_cases.cases_eligible > 0 && (
+              <dl className="dl" style={{ marginTop: 8 }}>
+                <dt>Comparable cases</dt>
+                <dd>
+                  {p.prior_cases.cases_eligible} usable
+                  {p.prior_cases.favourable > 0 && ` · ${p.prior_cases.favourable} favourable`}
+                  {p.prior_cases.unfavourable > 0 && ` · ${p.prior_cases.unfavourable} unfavourable`}
+                  {p.prior_cases.reverted > 0 && ` · ${p.prior_cases.reverted} reverted`}
+                </dd>
+                <dt>
+                  What that is
+                  <Hint text="Cases, not a measured response. A handful of reviewed outcomes can raise caution about repeating something; they cannot say how much of the result the change caused." />
+                </dt>
+                <dd className="muted">observed outcomes, not an estimated effect</dd>
+              </dl>
+            )}
+            {p.prior_cases.policy_version && (
+              <p className="meta" style={{ marginTop: 6 }}>
+                Learning policy {p.prior_cases.policy_version}
+              </p>
+            )}
           </section>
         )}
 

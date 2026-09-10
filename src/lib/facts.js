@@ -22,7 +22,7 @@ import {
 import { fitSpendResponse, recoveryFor, TARGET } from './marginal.js';
 import { decide } from './decide.js';
 import { budgetAvailability } from './budget.js';
-import { roiHeadroom } from './loopApi.js';
+import { roiHeadroom, reviewedHistory } from './loopApi.js';
 
 export function useFacts(shop, scope) {
   const id = shop?.id;
@@ -44,6 +44,23 @@ export function useFacts(shop, scope) {
   // fading asset from one that simply stopped being delivered.
   // Setting-response evidence, so a Target ROI action can size a step from
   // what this campaign has actually done instead of from a default band.
+  // WHAT HAPPENED LAST TIME, per action. Fetched for the actions that change a
+  // setting, because those are the ones where a prior result is genuinely
+  // comparable — a creative review is not a repeatable intervention in the
+  // same sense, so it is not asked about.
+  const historyQ = useQuery({
+    queryKey: ['revhist', id],
+    queryFn: async () => {
+      const codes = ['increase_budget', 'decrease_budget', 'increase_target_roi', 'decrease_target_roi'];
+      const out = {};
+      await Promise.all(codes.map(async (code) => {
+        out[code] = await reviewedHistory(id, code).catch(() => null);
+      }));
+      return out;
+    },
+    enabled: on,
+  });
+
   const headroomQ = useQuery({
     queryKey: ['roihead', id],
     queryFn: () => roiHeadroom(id),
@@ -166,6 +183,7 @@ export function useFacts(shop, scope) {
     campaigns,
     campaignWindowStates: windowStateQ.data ?? null,
     roiHeadroomByCampaign: headroomQ.data ?? null,
+    reviewedHistory: historyQ.data ?? null,
     dailyBudget,
     // Structured budget availability. `dailyBudget` above is kept as-is (it is
     // the ACTIVE budget and several callers depend on that meaning); this says

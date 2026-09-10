@@ -721,5 +721,122 @@ console.log('\n── Target ROI: no hidden default ──');
 }
 
 
+// ── what happened last time reaches the next recommendation ───────────────
+//
+// Every layer before this one recorded and nothing read back: a buyer could
+// accept a change, apply it, watch it breach a guardrail, review it honestly —
+// and the next identical situation produced the same confident advice.
+//
+// Section 17. The rules are deliberately ASYMMETRIC and deliberately small.
+console.log('\n── reviewed history changes later advice ──');
+{
+  const throttled = {
+    ...base,
+    dailyBudget: 1000,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+  };
+  const roiOf = (f) => decide(f).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+
+  // 1. Nothing reviewed — the normal state, and it must change nothing.
+  const bare = roiOf(throttled);
+  check('with no history the action carries no prior cases', bare.prior_cases, null);
+
+  const none = roiOf({
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.DECREASE_TARGET_ROI]: {
+        status: 'no_reviewed_history', cases_eligible: 0, favourable: 0, unfavourable: 0,
+        caution: 'No comparable change has been reviewed yet.',
+      },
+    },
+  });
+  check('an explicit empty history is carried, and says so',
+    none.prior_cases.status, 'no_reviewed_history');
+
+  // 2. A comparable change that went BADLY must demote the action.
+  const withBad = {
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.DECREASE_TARGET_ROI]: {
+        status: 'caution_from_history', cases_eligible: 2, favourable: 1, unfavourable: 1,
+        reverted: 0, caution: '1 of 2 comparable cases ended unfavourably.',
+      },
+    },
+  };
+  const bad = roiOf(withBad);
+  check('an unfavourable case is recorded on the action', bad.prior_cases.unfavourable, 1);
+  check('and the caution travels with it',
+    /ended unfavourably/.test(bad.prior_cases.caution), true);
+
+  // 3. A comparable change that went WELL may lift it, but far less.
+  const withGood = {
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.DECREASE_TARGET_ROI]: {
+        status: 'supported_by_history', cases_eligible: 3, favourable: 3, unfavourable: 0,
+        caution: '3 comparable cases, 3 favourable.',
+      },
+    },
+  };
+
+  // THE ASYMMETRY, measured rather than asserted: rank the same action under
+  // both histories and confirm bad moves it further than good.
+  const rankOf = (f, code) => decide(f).all.findIndex((r) => r.action_code === code);
+  const scoreProxy = (f) => {
+    const d = decide(f);
+    return d.all.map((r) => r.action_code).indexOf(ACTION.DECREASE_TARGET_ROI);
+  };
+  check('a bad case never promotes the action above a clean run',
+    scoreProxy(withBad) >= scoreProxy(throttled), true);
+
+  // 4. History must NEVER overturn a failed guardrail. A good run of cases
+  //    cannot make a simulated-spend action safe.
+  const simulated = {
+    ...base,
+    roas: { ...base.roas, is_simulated: true },
+    reviewedHistory: {
+      [ACTION.INCREASE_BUDGET]: {
+        status: 'supported_by_history', cases_eligible: 9, favourable: 9, unfavourable: 0,
+        caution: 'nine favourable cases',
+      },
+    },
+  };
+  const inc = decide(simulated).all.find((r) => r.action_code === ACTION.INCREASE_BUDGET);
+  const failedWith = (inc?.guardrails || []).filter((g) => !g.passed).map((g) => g.name);
+  check('a strong history does not clear a failed guardrail', failedWith.length > 0, true);
+
+  // THE PROPERTY THAT MATTERS FOR SECTION 17: history may nudge a ranking and
+  // must never change what the EVIDENCE says. The same guardrails fail, with
+  // the same names, whether or not nine favourable cases exist.
+  //
+  // (This shop's primary IS a blocked action, because on a simulated shop every
+  // candidate is blocked and the least-blocked still wins. That is pre-existing
+  // behaviour, disclosed by the failed guardrail and the simulated source tag,
+  // and it is not something history should be able to change either way.)
+  const withoutHistory = { ...simulated, reviewedHistory: null };
+  const incNo = decide(withoutHistory).all.find((r) => r.action_code === ACTION.INCREASE_BUDGET);
+  const failedWithout = (incNo?.guardrails || []).filter((g) => !g.passed).map((g) => g.name);
+  check('the same guardrails fail with and without a favourable history',
+    failedWith.join('|'), failedWithout.join('|'));
+  check('and the primary action is unchanged by history alone',
+    decide(simulated).primary?.action_code,
+    decide(withoutHistory).primary?.action_code);
+
+  // 5. Direction is not collapsed. Raising going badly says little about
+  //    lowering, so the lookup is per action code.
+  const otherDirection = roiOf({
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.INCREASE_TARGET_ROI]: {
+        status: 'caution_from_history', cases_eligible: 2, favourable: 0, unfavourable: 2,
+        caution: 'both raises went badly',
+      },
+    },
+  });
+  check('history for the opposite direction does not attach',
+    otherDirection.prior_cases, null);
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

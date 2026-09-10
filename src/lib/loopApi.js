@@ -314,3 +314,39 @@ export const organicBaseline = (shopId, start, end, method = 'rolling', lookback
 export const organicCounterfactual = (shopId, start, end) =>
   rpc('organic_counterfactual', { p_shop_id: shopId, p_start: start, p_end: end })
     .then((r) => (Array.isArray(r) ? r[0] : r) || null);
+
+/* ── reviewed history feeding the next recommendation ─────────────────────── */
+
+export const HISTORY_STATUS_LABEL = {
+  no_reviewed_history: 'Nothing reviewed yet',
+  all_cases_confounded: 'Cases exist, none usable',
+  caution_from_history: 'A comparable change went badly',
+  single_case: 'One comparable case',
+  supported_by_history: 'Comparable cases',
+};
+
+/**
+ * Reviewed episodes comparable to a proposed action.
+ *
+ * Returns unfavourable, mixed and inconclusive cases as well as favourable
+ * ones. Selecting only favourable history is how a tool talks itself into a
+ * habit, so the filtering happens on EVIDENCE QUALITY (was it confounded, was
+ * it measurable) and never on whether the answer was liked.
+ */
+export const comparableCases = (shopId, action, entityId = null, limit = 20) =>
+  rpc('comparable_reviewed_cases', {
+    p_shop_id: shopId, p_action: action, p_entity_id: entityId, p_limit: limit,
+  });
+
+export const reviewedHistory = (shopId, action, entityId = null) =>
+  rpc('reviewed_history_summary', {
+    p_shop_id: shopId, p_action: action, p_entity_id: entityId,
+  }).then((r) => (Array.isArray(r) ? r[0] : r) || null);
+
+/**
+ * The replay report: of the recommendations issued, which were acted on and
+ * what followed. It does NOT compare accepted against rejected — the accepted
+ * ones are the ones somebody agreed to, and treating that as a trial would
+ * launder a selection into a result.
+ */
+export const learningReplay = (shopId) => rpc('learning_replay', { p_shop_id: shopId });
