@@ -7,7 +7,7 @@
 // proves the judgement, and the judgement is the part that protects money.
 import {
   fitSpendResponse, scenarios, ols, isAnswerable,
-  STATUS, MIN_DAYS, MIN_CV,
+  STATUS, MIN_DAYS, MIN_CV, TARGET,
 } from '../src/lib/marginal.js';
 
 let pass = 0; const failures = [];
@@ -201,6 +201,104 @@ console.log('\n── OLS itself ──');
   check('collinear inputs return null, not nonsense', ols([[1, 1], [1, 1], [1, 1]], [1, 2, 3]), null);
   check('fewer rows than parameters returns null', ols([[1, 2]], [1]), null);
 }
+
+// ── the audit: dependent observations, no manufactured ceiling, honest ledger
+//
+// Section 11 asks for the model's assumptions to be audited rather than
+// re-asserted. Three things came out of that, and these pin them.
+console.log('\n── daily observations are not independent ──');
+{
+  // AR(1) errors with strong persistence — the shape daily advertising data
+  // actually has, and the case classical standard errors get wrong.
+  let e = 0; let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 - 0.5; };
+  const X = []; const y = [];
+  for (let i = 0; i < 60; i += 1) {
+    const ls = Math.log(200 + 60 * Math.sin(i / 5) + 20 * rnd());
+    e = 0.85 * e + 0.4 * rnd();
+    X.push([1, ls]);
+    y.push(2.0 + 0.7 * ls + e);
+  }
+  const f = ols(X, y);
+
+  check('the estimate itself is unchanged by the correction',
+    Math.abs(f.beta[1] - 0.5257) < 0.01, true);
+  // THE POINT. Classical errors understate uncertainty on autocorrelated data,
+  // and a too-tight interval reads on screen as confidence — which is what a
+  // buyer spends money on.
+  check('the robust interval is WIDER than the naive one',
+    f.se_hac[1] > f.se_ols[1], true);
+  check('and the reported error is the robust one', f.se[1], f.se_hac[1]);
+  check('the inflation is reported, not hidden', f.hac_inflation > 1, true);
+  check('the lag bandwidth is reported', f.hac_lags >= 1, true);
+
+  // A floor, so the model can never report a NARROWER interval than the
+  // classical one by picking whichever number flatters it.
+  const clean = [];
+  const cy = [];
+  let s2 = 11;
+  const r2 = () => { s2 = (s2 * 1103515245 + 12345) % 2147483648; return s2 / 2147483648 - 0.5; };
+  for (let i = 0; i < 60; i += 1) {
+    const ls = Math.log(200 + 80 * r2());
+    clean.push([1, ls]);
+    cy.push(1 + 0.5 * ls + 0.05 * r2());   // independent errors
+  }
+  const g = ols(clean, cy);
+  check('with independent errors the reported SE never drops below classical',
+    g.se[1] >= g.se_ols[1] - 1e-12, true);
+}
+
+console.log('\n── the model cannot find a ceiling, and says so ──');
+{
+  // A power curve bends but never turns. Whatever the elasticity, predicted
+  // revenue keeps rising — so the model cannot manufacture a saturation point
+  // AND must not be read as having ruled one out.
+  const rising = [];
+  for (let i = 0; i < 40; i += 1) {
+    const spend = 100 + i * 12;
+    rising.push({ spend, revenue: spend * 1.6 });     // perfectly linear
+  }
+  const f = fitSpendResponse(rising, { target: TARGET.TOTAL_SHOP_GMV });
+  check('a ceiling is never reported as identified', f.ceiling?.identified, false);
+  check('the shape is described', typeof f.ceiling?.shape === 'string', true);
+  check('and the reason says a ceiling was not found, not that spending is unlimited',
+    /no ceiling|cannot be distinguished/i.test(f.ceiling?.reason || ''), true);
+
+  // Strongly diminishing returns still produce no ceiling: the curve flattens
+  // without turning, so there is no spend level at which revenue falls.
+  const diminishing = [];
+  for (let i = 0; i < 40; i += 1) {
+    const spend = 100 + i * 12;
+    diminishing.push({ spend, revenue: 300 * Math.sqrt(spend) });   // elasticity 0.5
+  }
+  const d = fitSpendResponse(diminishing, { target: TARGET.TOTAL_SHOP_GMV });
+  if (d.ceiling) {
+    check('diminishing returns still identify no ceiling', d.ceiling.identified, false);
+    check('and that is explained as flattening without turning',
+      /flattens without turning|no maximum/i.test(d.ceiling.reason || ''), true);
+  }
+}
+
+console.log('\n── a training window is not the evidence base ──');
+{
+  // 40 calendar days, but only 20 carry spend and a target. Reporting "20 days"
+  // beside a 40-day range invites the range to be read as the evidence.
+  const sparse = [];
+  for (let i = 0; i < 40; i += 1) {
+    if (i % 2 === 0) sparse.push({ spend: 0, revenue: 500 });          // not running
+    else sparse.push({ spend: 200 + (i % 7) * 30, revenue: 600 + (i % 5) * 90 });
+  }
+  const f = fitSpendResponse(sparse, { target: TARGET.TOTAL_SHOP_GMV });
+  check('the window size is reported', f.days_in_window, 40);
+  check('and the days actually fitted on', f.days, 20);
+  check('and how many were dropped', f.days_dropped, 20);
+  // A zero-spend day is a REAL state — the campaign was not running — and it is
+  // also why the no-advertising counterfactual is not estimable from this model.
+  check('zero-spend days are counted separately, not called missing',
+    f.days_zero_spend, 20);
+}
+
+
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { console.log('FAILED: ' + failures.join(', ')); process.exit(1); }

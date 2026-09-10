@@ -29,7 +29,7 @@ named its method, a capture percentage described as agreement.
 | 8 | Comparison windows and campaign state | **Implemented and tested** |
 | 9 | Organic baselines | **Implemented and tested** |
 | 10 | Creative intelligence | Partial — diagnosis grading done, under-delivered winner detection not |
-| 11 | Marginal engine | Carried from Issue 4, not re-audited here |
+| 11 | Marginal engine | **Audited and corrected** |
 | 12 | Target ROI headroom, both directions | **Implemented; returns insufficient_history on live data** |
 | 13 | Recommendation diagnosis and prioritisation | **Implemented and tested** |
 | 14 | Persist recommendations and decisions | Carried from Issue 4, verified by `check:decisions` |
@@ -93,8 +93,8 @@ pair that canonicalising made identical. No migration drops a column or a table.
 
 | Command | Result |
 |---|---|
-| `npm test` | **465 passed, 0 failed** |
-| `node scripts/visual-qa.mjs` | **143 passed, 0 failed** |
+| `npm test` | **480 passed, 0 failed** |
+| `node scripts/visual-qa.mjs` | **145 passed, 0 failed** |
 | `npm run check:loop` (T31) | **26 passed, 0 failed** |
 | `npm run check:decisions` | **16 passed, 0 failed** |
 | `npm run check:retention` (T01/T03) | **17 passed, 0 failed** |

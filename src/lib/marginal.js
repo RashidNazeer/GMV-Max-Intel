@@ -126,8 +126,73 @@ export function ols(X, y) {
   const df = n - k;
   if (df <= 0 || sst <= 0) return null;
   const sigma2 = ssr / df;
-  const se = inv.map((row, i) => Math.sqrt(Math.max(sigma2 * row[i], 0)));
-  return { beta, se, r2: 1 - ssr / sst, n, df };
+  const seOls = inv.map((row, i) => Math.sqrt(Math.max(sigma2 * row[i], 0)));
+
+  // ── THESE OBSERVATIONS ARE NOT INDEPENDENT ────────────────────────────────
+  //
+  // The standard errors above assume each day's error is unrelated to the last.
+  // Daily advertising data is not like that: a good week is good on Tuesday and
+  // still good on Wednesday, and whatever drives that — a promotion, a video
+  // taking off, a stock position — persists across days.
+  //
+  // With positive autocorrelation the classical formula UNDERSTATES the
+  // uncertainty, sometimes badly. The estimate does not move; the confidence
+  // interval around it is too tight, so the model claims to know the elasticity
+  // more precisely than the data can support. On a screen that reads as
+  // confidence, and confidence is what a buyer spends money on.
+  //
+  // Newey-West fixes the interval without touching the estimate. The bandwidth
+  // is the usual 4(n/100)^(2/9) rule; the Bartlett weights taper contributions
+  // from more distant lags so the variance estimate stays positive.
+  const resid = y.map((v, i) => v - yhat[i]);
+  const L = Math.max(1, Math.floor(4 * ((n / 100) ** (2 / 9))));
+
+  const meat = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let a = 0; a < k; a++) {
+      for (let b2 = 0; b2 < k; b2++) meat[a][b2] += resid[i] * resid[i] * X[i][a] * X[i][b2];
+    }
+  }
+  for (let l = 1; l <= L && l < n; l++) {
+    const w = 1 - l / (L + 1);          // Bartlett kernel
+    for (let i = l; i < n; i++) {
+      for (let a = 0; a < k; a++) {
+        for (let b2 = 0; b2 < k; b2++) {
+          meat[a][b2] += w * resid[i] * resid[i - l]
+            * (X[i][a] * X[i - l][b2] + X[i - l][a] * X[i][b2]);
+        }
+      }
+    }
+  }
+
+  // The sandwich: (X'X)^-1 · S · (X'X)^-1. Only the diagonal is needed, which
+  // is the variance of each coefficient.
+  const mid = Array.from({ length: k }, (_, r) =>
+    Array.from({ length: k }, (__, c) =>
+      inv[r].reduce((s, v, j) => s + v * meat[j][c], 0)));
+  const varHac = Array.from({ length: k }, (_, r) =>
+    mid[r].reduce((s, v, j) => s + v * inv[j][r], 0));
+  const seHac = varHac.map((v) => Math.sqrt(Math.max(v, 0)));
+
+  // Never REPORT a narrower interval than the classical one. HAC can come out
+  // smaller on a short sample through sampling noise, and reporting the
+  // narrower of the two would be choosing whichever number flatters the model.
+  const se = seHac.map((v, i) => (Number.isFinite(v) && v > seOls[i] ? v : seOls[i]));
+
+  return {
+    beta,
+    se,
+    se_ols: seOls,
+    se_hac: seHac,
+    hac_lags: L,
+    // How much wider honesty about serial correlation made the interval. Shown,
+    // because "the interval is 40% wider than the naive one" is the kind of
+    // thing a reader should be told rather than protected from.
+    hac_inflation: seOls[1] > 0 ? se[1] / seOls[1] : null,
+    r2: 1 - ssr / sst,
+    n,
+    df,
+  };
 }
 
 function correlation(a, b) {
@@ -210,7 +275,32 @@ export function fitSpendResponse(rows = [], opts = {}) {
     .map((r, i) => ({ i, spend: num(r.spend), revenue: num(r.revenue) }))
     .filter((p) => p.spend > 0 && p.revenue > 0);
 
-  const base = { days: pts.length, target, target_label: TARGET_LABEL[target] || target, horizon_days: horizonDays };
+  // ── THE OBSERVATION LEDGER ────────────────────────────────────────────────
+  //
+  // `days` is the number of days the model actually FITTED ON, and it was the
+  // only figure reported. A window of 62 calendar days that yields 30 usable
+  // ones would report "30 days" beside a date range spanning two months, and a
+  // reader would reasonably take the range as the evidence base.
+  //
+  // The three ways a day disappears are separated, because they mean different
+  // things and only one of them is a data problem:
+  //   zero-spend    the campaign was not running. A real state, unusable in a
+  //                 log fit, and the reason the no-advertising counterfactual
+  //                 is not estimable — the model has never seen this shop at
+  //                 zero spend.
+  //   missing target  we hold spend but not revenue. Missing, NOT zero.
+  //   unusable      neither figure is positive.
+  const daysInWindow = raw.length;
+  const daysZeroSpend = raw.filter((r) => num(r.spend) === 0).length;
+  const base = {
+    days: pts.length,
+    days_in_window: daysInWindow,
+    days_zero_spend: daysZeroSpend,
+    days_dropped: Math.max(0, daysInWindow - pts.length),
+    target,
+    target_label: TARGET_LABEL[target] || target,
+    horizon_days: horizonDays,
+  };
 
   // A day where the target is MISSING is not a day where it was zero. Dropping
   // it silently would shrink the sample without saying so.
@@ -292,6 +382,48 @@ export function fitSpendResponse(rows = [], opts = {}) {
     time_confounded: spendTimeCorr != null && Math.abs(spendTimeCorr) > TIME_CONFOUND,
     marginal_roas: b * avgRoas,
     marginal_roas_ci: [ci[0] * avgRoas, ci[1] * avgRoas],
+
+    // ── HOW WIDE THE INTERVAL HAD TO BE ─────────────────────────────────────
+    // The confidence interval above already uses serial-correlation-robust
+    // errors. These say by how much, because "the interval is 30% wider than
+    // the naive calculation" is something a reader should be told rather than
+    // protected from — and because a reader comparing this against a figure
+    // computed elsewhere needs to know the two were not computed the same way.
+    elasticity_se_naive: timed.se_ols?.[1] ?? null,
+    hac_lags: timed.hac_lags ?? null,
+    hac_inflation: timed.hac_inflation ?? null,
+
+    // ── NO SPEND CEILING IS IDENTIFIED, AND THAT IS STRUCTURAL ──────────────
+    //
+    // This model is a power curve. It bends but it never turns: whatever the
+    // elasticity, predicted revenue keeps rising with spend. It therefore
+    // CANNOT produce a saturation point, and the honest consequence is that it
+    // must never be read as having ruled one out either. A curve chosen because
+    // it guarantees a turning point would manufacture the answer; this one
+    // cannot manufacture it and cannot find it.
+    //
+    // The economic limit is a different question with a different answer: the
+    // spend level where the marginal return falls below what the objective
+    // requires. That is computable when returns diminish, and undefined when
+    // they do not — which is Biostime's case today, with an elasticity above 1
+    // across the whole observed range.
+    ceiling: (() => {
+      const shape = ci[0] > 1 ? 'increasing'
+        : ci[1] < 1 ? 'diminishing'
+          : 'near_linear';
+      return {
+        identified: false,
+        shape,
+        reason: shape === 'increasing'
+          ? 'Returns are increasing across every spend level observed, so no ceiling exists within the range this campaign has actually run at. That is a statement about the observed range, not a promise that spending is unlimited.'
+          : shape === 'diminishing'
+            ? 'Returns diminish, but a diminishing curve still has no maximum — it flattens without turning. There is no spend level at which revenue starts to fall, so no ceiling is identified. The economic limit, where the marginal return drops below what the objective needs, is the relevant question instead.'
+            : 'The response cannot be distinguished from linear across the observed range, so neither a ceiling nor diminishing returns can be claimed.',
+        // Never quoted as a safe spend level. It is where the marginal return
+        // crosses 1.0, and only meaningful when returns actually diminish.
+        economic_limit_computable: shape === 'diminishing',
+      };
+    })(),
     // Straddling 1 means we cannot distinguish diminishing from constant
     // returns, which is a finding rather than a failure.
     diminishing_returns: ci[1] < 1 ? true : ci[0] > 1 ? false : null,

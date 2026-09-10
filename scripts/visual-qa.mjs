@@ -512,6 +512,31 @@ if (campReady) {
     !/If daily budget/i.test(scenario));
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-scenario.png') });
 
+  // ── the model states what it cannot find ─────────────────────────
+  // A power curve bends but never turns, so it cannot produce a saturation
+  // point and must not be read as having ruled one out.
+  //
+  // TWO VALID STATES, and both must be legible. The gate runs on whichever
+  // shop is active, and on Cutler the fit is too uncertain to answer at all —
+  // so the refusal renders instead of the diagnostics. Asserting only the
+  // answerable branch failed here for the RIGHT reason, and demanding it
+  // would have been demanding the model answer when it should not.
+  const answerable = /No spend ceiling is identified/i.test(scenario);
+  if (answerable) {
+    check("an answerable model says no spend ceiling is identified", true);
+    check("and explains that it cannot find one, rather than implying none exists",
+      /bends but never turns|cannot find a point/i.test(scenario));
+    check("days fitted is shown against the window it was drawn from",
+      /Days fitted/i.test(scenario) && /in the training window/i.test(scenario));
+  } else {
+    // The refusal must say WHY, and must not quote a midpoint anyway.
+    check("a model that cannot answer refuses in plain words",
+      /too wide to act on|not enough|barely varied|insufficient/i.test(scenario),
+      scenario.slice(0, 160).replace(/s+/g, " "));
+    check("and does not quote a precise figure anyway",
+      !/No spend ceiling is identified/i.test(scenario));
+  }
+
   // ── Target ROI headroom: both directions, and no invented number ─────────
   // The candidate used to be a fixed 5/10/15% ladder applied to every campaign
   // on every shop, with nothing in it drawn from the campaign it was shown

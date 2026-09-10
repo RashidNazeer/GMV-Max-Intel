@@ -428,7 +428,16 @@ function Scenario({ facts, cur, scope, decision, onOpenDecision }) {
     {
       label: 'Marginal return', value: fixed(head.marginal_roas), source: 'modelled',
       context: `95% interval ${fixed(head.marginal_roas_ci[0])}–${fixed(head.marginal_roas_ci[1])}`,
-      hint: `Expected incremental ${head.target_label} per incremental ad dollar.`,
+      // THE INTERVAL IS DELIBERATELY WIDER THAN THE TEXTBOOK ONE.
+      // Daily advertising data is autocorrelated — a good week is good on
+      // Tuesday and still good on Wednesday — and the classical formula
+      // understates uncertainty when that is true. A too-tight interval reads
+      // on screen as confidence, and confidence is what a buyer spends money
+      // on, so the correction and its size are both stated.
+      hint: `Expected incremental ${head.target_label} per incremental ad dollar.`
+        + (head.hac_inflation > 1.01
+          ? ` The interval is ${((head.hac_inflation - 1) * 100).toFixed(0)}% wider than a textbook calculation would give, because days are not independent of each other — a serial-correlation correction over ${head.hac_lags} lags. The estimate is unchanged; only the uncertainty around it is honest.`
+          : ' The interval already allows for days not being independent of each other; on this history that correction made no material difference.'),
     },
     {
       label: 'Average return', value: fixed(head.avg_roas), source: 'measured',
@@ -447,6 +456,20 @@ function Scenario({ facts, cur, scope, decision, onOpenDecision }) {
         ? `${head.validation.folds} forward folds · ${pct(head.validation.mape, 0)} error vs ${pct(head.validation.baseline_mape, 0)} baseline`
         : 'not enough history to validate',
       hint: "Error removed against a naive 'tomorrow looks like the recent average' baseline, tested only on days the model had not seen. This is model confidence, not recommendation confidence.",
+    },
+    // ── WHAT THE TRAINING WINDOW ACTUALLY CONTAINED ────────────────────────
+    // "32 days" beside a two-month date range invites the range to be read as
+    // the evidence base. A day the campaign was not running is a real state,
+    // not a gap, and it is also why the no-advertising counterfactual is not
+    // estimable — the model has never seen this shop at zero spend.
+    {
+      label: 'Days fitted', source: 'measured',
+      value: head.days == null ? '—' : String(head.days),
+      context: head.days_in_window
+        ? `of ${head.days_in_window} in the training window`
+          + (head.days_zero_spend ? ` · ${head.days_zero_spend} with no spend` : '')
+        : 'training window size not reported',
+      hint: 'The number of days the curve was actually fitted on, against the number the window spans. A date range is not an evidence base: days with no spend, or with no revenue figure, cannot enter a log fit and are counted separately rather than quietly dropped.',
     },
   ] : [];
 
@@ -474,6 +497,29 @@ function Scenario({ facts, cur, scope, decision, onOpenDecision }) {
       ) : (
         <>
           <MetricSummary items={modelMetrics} source="modelled" />
+
+          {/* ── NO SPEND CEILING IS IDENTIFIED, AND THAT IS STRUCTURAL ───────
+              This model is a power curve: it bends but never turns, so
+              predicted revenue keeps rising with spend whatever the elasticity.
+              It therefore cannot produce a saturation point — and must never be
+              read as having ruled one out either. Saying so is the difference
+              between an honest limitation and a silence a reader fills in
+              themselves. A curve chosen because it guarantees a turning point
+              would manufacture the answer instead. */}
+          {head.ceiling && (
+            <Notice tone="info">
+              <strong>No spend ceiling is identified.</strong> {head.ceiling.reason}
+              <p className="meta" style={{ margin: '6px 0 0' }}>
+                This model bends but never turns, so it cannot find a point where more
+                spend stops paying — and it should not be read as having ruled one out.
+                The question it can answer is the economic one: where the marginal return
+                falls below what your objective needs
+                {head.ceiling.economic_limit_computable
+                  ? ', which is computable here because returns diminish.'
+                  : ', which is not computable on this history because returns do not diminish across the range observed.'}
+              </p>
+            </Notice>
+          )}
 
           <Panel
             title="What the next dollar returns"
