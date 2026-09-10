@@ -71,6 +71,31 @@ for (const shop of savedShops) {
       onPage: async (rows) => {
         received += rows.length;
         if (!rows.length) return;
+
+        // ── ARCHIVE THE PAYLOAD BEFORE DERIVING ANYTHING FROM IT ───────────
+        // The normalised row carries a `raw` column, but that column is
+        // overwritten by the next upsert of the same order — so the evidence
+        // for a classification is replaced by the evidence for the CURRENT
+        // classification, and an argument about last week's split cannot be
+        // settled. This keeps the page itself, deduplicated on a content hash
+        // so re-fetching unchanged data adds nothing.
+        //
+        // A failure here must not lose the sync: the archive is evidence, and
+        // evidence is worth less than the facts it supports.
+        const { error: pErr } = await db.rpc('record_source_payload', {
+          p_shop_id: shop.id,
+          p_provider: 'reacher',
+          p_endpoint: '/affiliate/transactions',
+          p_payload: rows,
+          p_entity_type: null,
+          p_entity_id: null,
+          p_reporting_date: END,
+          p_source_time: null,
+          p_schema_version: null,
+          p_row_count: rows.length,
+        });
+        if (pErr) console.log(`  payload archive: ${pErr.message.slice(0, 70)}`);
+
         const mapped = rows.map((t) => normalizeAffiliateTransaction(t, shop.id));
         // Chunked so a large backfill never builds one oversized request.
         for (let i = 0; i < mapped.length; i += CHUNK) {
