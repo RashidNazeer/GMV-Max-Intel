@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
-import { shopSummary, syncRuns, shopReconciliation, shopPaidRoas, money } from '../lib/api.js';
+import { shopSummary, syncRuns, shopReconciliation, shopPaidRoas, shopSourceHealth, money } from '../lib/api.js';
 import { useScope, RANGES, scopedTo } from '../lib/scope.js';
 import { Skeleton, Notice, EmptyState, Boundary } from '../components/ui.jsx';
 
@@ -212,13 +212,30 @@ function DataStatusLink({ shop, scope, onOpen }) {
     queryKey: ['roaspill', shop?.id, scope.start, scope.end],
     queryFn: () => shopPaidRoas(shop.id, scope.start, scope.end), enabled: !!shop?.id,
   });
+  // COVERAGE HAS TO REACH THIS INDICATOR NOW.
+  //
+  // The "Spend available through Sep 5; report ends Sep 7" banner has been
+  // taken off the main screens to keep them clean. This link is therefore the
+  // only standing signal, and until now it only knew about failed sync RUNS and
+  // reconciliation. A source can succeed and still be days short — that is the
+  // whole distinction migration 019 exists to make — so a silent gap would have
+  // been the result of removing the banner. It is not.
+  const healthQ = useQuery({
+    queryKey: ['srchealth', shop?.id, scope.start, scope.end],
+    queryFn: () => shopSourceHealth(shop.id, scope.start, scope.end), enabled: !!shop?.id,
+  });
+
   if (!shop) return null;
 
   const failed = (runsQ.data || []).filter((r) => r.status === 'error');
   const recon = reconQ.data;
-  const tone = recon?.status === 'exception' ? 'bad' : failed.length ? 'warn' : 'ok';
+  const short = (healthQ.data || []).filter((s) => Number(s.missing_days) > 0);
+
+  const tone = recon?.status === 'exception' ? 'bad'
+    : (failed.length || short.length) ? 'warn' : 'ok';
   const label = recon?.status === 'exception' ? 'Action required'
-    : failed.length ? 'Limited data' : 'Healthy';
+    : short.length ? `${short.length} source${short.length === 1 ? '' : 's'} short of the report`
+      : failed.length ? 'Limited data' : 'Healthy';
 
   return (
     <button className="navlink" onClick={onOpen} style={{ width: '100%', background: 'none', border: 0, textAlign: 'left' }}

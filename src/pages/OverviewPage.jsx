@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { useOutletContext, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  listRecommendations, persistRecommendation, shopSpendDaily, listCampaigns, shopSourceHealth,
+  listRecommendations, persistRecommendation, shopSpendDaily, listCampaigns,
   shopAttribution, shopPaidRoas,
   money, pct, fixed, numOrNull,
 } from '../lib/api.js';
@@ -22,7 +22,6 @@ import { useFacts } from '../lib/facts.js';
 import { scopedTo } from '../lib/scope.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import PerformanceChart from '../components/PerformanceChart.jsx';
-import CompletenessNotice from '../components/CompletenessNotice.jsx';
 import { PriorityStrip, RecommendationDrawer } from '../components/Decisions.jsx';
 import {
   Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint, Delta,
@@ -44,10 +43,6 @@ export default function OverviewPage() {
     queryFn: () => listRecommendations(shop.id, { status: ['proposed', 'planned', 'applied'] }),
   });
   const campaignsQ = useQuery({ queryKey: ['camps', shop.id], queryFn: () => listCampaigns(shop.id) });
-  const healthQ = useQuery({
-    queryKey: ['srchealth', shop.id, scope.start, scope.end],
-    queryFn: () => shopSourceHealth(shop.id, scope.start, scope.end),
-  });
   const spendQ = useQuery({
     queryKey: ['spendd', shop.id, scope.start, scope.end],
     queryFn: () => shopSpendDaily(shop.id, scope.start, scope.end),
@@ -249,7 +244,17 @@ export default function OverviewPage() {
         </Notice>
       )}
 
-      <CompletenessNotice sources={healthQ.data} page="overview" scope={scope} params={params} />
+      {/* THE COVERAGE BANNER LIVES ON DATA STATUS NOW.
+          A notice that appears every day about a condition the buyer cannot act
+          on is a notice people learn to scroll past — and then they scroll past
+          the one that matters. Owner decision, 2026-09-10: main screens stay
+          clean; Data status carries every gap at any size, and the sidebar link
+          still marks itself when something is wrong.
+
+          What did NOT move: the guardrails. A recommendation whose evidence is
+          incomplete is still blocked, still says so in its drawer, and still
+          refuses to claim a check passed that never ran. Hiding the banner is a
+          presentation choice; it must never become a silent decision. */}
 
       <MetricSummary items={metrics} source="measured" loading={coreLoading} />
 
