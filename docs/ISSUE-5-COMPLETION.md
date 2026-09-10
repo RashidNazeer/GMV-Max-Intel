@@ -22,10 +22,10 @@ named its method, a capture percentage described as agreement.
 | § | Subject | Status |
 |---|---|---|
 | 3 | Baseline established | **Implemented and tested** |
-| 4 | Shared evidence contract | Partial — structured checks exist, full contract not unified |
-| 5 | Source ingestion and capability reporting | Partial — three capability states exist, no registry |
+| 4 | Shared evidence contract | **Implemented and tested** |
+| 5 | Source ingestion and capability reporting | **Implemented and tested** |
 | 6 | Raw retention, snapshots, revisions | **Implemented and tested** |
-| 7 | Attribution metadata and reconciliation | Partial — thresholds and capture naming done, evidence-basis metadata not |
+| 7 | Attribution metadata and reconciliation | **Implemented and tested** |
 | 8 | Comparison windows and campaign state | **Implemented and tested** |
 | 9 | Organic baselines | **Implemented and tested** |
 | 10 | Creative intelligence | Partial — diagnosis grading done, under-delivered winner detection not |
@@ -79,6 +79,8 @@ prompt.
 | `035_organic_baseline` | Three named baseline methods, plus a counterfactual that refuses |
 | `036_reviewed_history` | Comparable reviewed cases, and the replay report |
 | `037_raw_retention_and_revisions` | Raw payload archive and late-data restatement capture |
+| `038_capability_registry` | What the integration can and cannot do, with evidence and dependency |
+| `039_evidence_basis` | How each pound was established, as a partition that reconciles |
 
 **Recovery.** Every migration is re-runnable and verifies itself in a `DO`
 block that raises rather than warns. 028 and 030 alter existing data; both
@@ -91,13 +93,13 @@ pair that canonicalising made identical. No migration drops a column or a table.
 
 | Command | Result |
 |---|---|
-| `npm test` | **421 passed, 0 failed** |
-| `node scripts/visual-qa.mjs` | **133 passed, 0 failed** |
+| `npm test` | **465 passed, 0 failed** |
+| `node scripts/visual-qa.mjs` | **143 passed, 0 failed** |
 | `npm run check:loop` (T31) | **26 passed, 0 failed** |
 | `npm run check:decisions` | **16 passed, 0 failed** |
 | `npm run check:retention` (T01/T03) | **17 passed, 0 failed** |
 | `npm run build` | clean |
-| `node scripts/migrate.mjs` | 037 applied, all verifications passed |
+| `node scripts/migrate.mjs` | 039 applied, all verifications passed |
 
 The browser and loop suites run against a built bundle served by
 `scripts/serve-dist.mjs`. That file exists because `vite preview` kept dying
@@ -124,9 +126,11 @@ for every check it never reached.
 | T26 learning influence | `decide-tests` — asymmetric rules, cannot clear a guardrail |
 | T31 full persisted loop | `check:loop` — 26 checks through the real UI |
 | T32 external action boundary | `check:loop` — every non-GET request watched; zero external writes |
+| T04 accounting oracle | migration 039 verify — the basis partition sums to components to the cent |
+| T06 evidence basis | migration 039 + browser — lineage without doubling revenue |
 
-**14 of 32.** The remainder need either fixtures that do not exist yet
-(T04–T07, T09–T10, T12–T15, T18–T19, T22, T24, T27–T30) or evidence the
+**16 of 32.** The remainder need either fixtures that do not exist yet
+(T05, T07, T09–T10, T12–T15, T18–T19, T22, T24, T27–T30) or evidence the
 integration does not provide.
 
 ---
