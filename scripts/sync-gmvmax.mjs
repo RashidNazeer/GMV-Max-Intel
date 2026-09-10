@@ -101,25 +101,34 @@ for (const shop of shops) {
         .upsert(normalizeCampaign(c, shop.id, settings, 'reacher'), { onConflict: 'shop_id,campaign_id' });
       if (cErr) throw new Error(`campaign ${c.campaign_id}: ${cErr.message}`);
 
-      // ── APPEND-ONLY SETTINGS SNAPSHOT ────────────────────────────────────
+      // ── SETTINGS SNAPSHOT: ONE ROW PER STATE, NOT PER RUN ────────────────
       // Reacher's /changes feed is empty and /settings returns nulls, so no
       // settings history exists and none can be reconstructed for the past.
-      // Every day without a snapshot is a day of evidence permanently lost,
-      // which is why this writes unconditionally rather than waiting for a
-      // feature to need it. Consecutive snapshots are what campaign_setting_
-      // changes() diffs to detect a change — and a DETECTED change is kept
-      // distinct from a buyer REPORTING one.
-      const { error: sErr } = await db.from('campaign_setting_snapshots').insert({
-        shop_id: shop.id,
-        campaign_id: String(c.campaign_id),
-        campaign_name: c.campaign_name ?? null,
-        status: c.status ?? null,
-        target_roas: c.roas_bid ?? null,
-        daily_budget: c.budget ?? null,
-        campaign_type: c.shopping_ads_type ?? null,
-        currency: c.currency ?? null,
-        data_source: 'reacher',
-        raw: c,
+      // Every day without an observation is a day of evidence permanently lost,
+      // which is why this records on every run rather than waiting for a
+      // feature to need it.
+      //
+      // It used to INSERT unconditionally, which recorded our polling schedule
+      // instead of the campaign's history: two runs on 9 September left eight
+      // rows for four campaigns, every one asserting the same settings. Since
+      // campaign_setting_changes() detects a change by diffing consecutive
+      // rows, duplicates guaranteed it would find nothing, forever.
+      //
+      // record_campaign_snapshot (migration 028) extends the existing row when
+      // nothing has changed and opens a new one when something has, under a row
+      // lock so overlapping runs cannot both claim to be first. A DETECTED
+      // change stays distinct from a buyer REPORTING one.
+      const { error: sErr } = await db.rpc('record_campaign_snapshot', {
+        p_shop_id: shop.id,
+        p_campaign_id: String(c.campaign_id),
+        p_campaign_name: c.campaign_name ?? null,
+        p_status: c.status ?? null,
+        p_target_roas: c.roas_bid ?? null,
+        p_daily_budget: c.budget ?? null,
+        p_campaign_type: c.shopping_ads_type ?? null,
+        p_currency: c.currency ?? null,
+        p_data_source: 'reacher',
+        p_raw: c,
       });
       // A snapshot is evidence, not a gate: failing to record one must not
       // abort a sync that is otherwise collecting real spend.

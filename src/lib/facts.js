@@ -20,6 +20,7 @@ import {
 } from './api.js';
 import { fitSpendResponse, recoveryFor, TARGET } from './marginal.js';
 import { decide } from './decide.js';
+import { budgetAvailability } from './budget.js';
 
 export function useFacts(shop, scope) {
   const id = shop?.id;
@@ -99,6 +100,10 @@ export function useFacts(shop, scope) {
   const roiSet = new Set(enabled.map((c) => Number(c.target_roas)).filter(Number.isFinite));
   const targetRoi = roiSet.size === 1 ? [...roiSet][0] : null;
 
+  // Why `dailyBudget` being null is not the same as no budget existing, and
+  // which of the four states this shop is in — see src/lib/budget.js.
+  const budget = budgetAvailability(campaigns);
+
   const spendRows = modelQ.data || [];
 
   // Fitted against THREE targets, all shown. The headline is total shop GMV —
@@ -142,6 +147,10 @@ export function useFacts(shop, scope) {
     roas: roasQ.data,
     campaigns,
     dailyBudget,
+    // Structured budget availability. `dailyBudget` above is kept as-is (it is
+    // the ACTIVE budget and several callers depend on that meaning); this says
+    // why it is null when it is null. See the derivation above.
+    budget,
     targetRoi,
     daysSinceLastChange,
     // Whether ANY setting record covers the days being analysed. Snapshots began

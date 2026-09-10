@@ -148,8 +148,31 @@ Deno.serve(async (req) => {
           'shop_id,campaign_id',
         );
         for (const c of campaigns) {
-          const id = (c as Record<string, unknown>).campaign_id;
+          const r = c as Record<string, unknown>;
+          const id = r.campaign_id;
           if (!id) continue;
+
+          // SETTINGS HISTORY ACCRUES HERE, NOT ONLY IN THE MANUAL SCRIPT.
+          //
+          // This is the job that actually runs every day. Until now only
+          // scripts/sync-gmvmax.mjs recorded snapshots, so settings history grew
+          // on the days a human happened to run that script and on no others,
+          // which is the real reason campaign history looked empty. The RPC is
+          // idempotent: an unchanged campaign extends its existing row, so
+          // running this daily accrues evidence rather than duplicates.
+          await db.rpc('record_campaign_snapshot', {
+            p_shop_id: shop.id,
+            p_campaign_id: String(id),
+            p_campaign_name: (r.campaign_name as string) ?? null,
+            p_status: (r.status as string) ?? null,
+            p_target_roas: (r.roas_bid as number) ?? null,
+            p_daily_budget: (r.budget as number) ?? null,
+            p_campaign_type: (r.shopping_ads_type as string) ?? null,
+            p_currency: (r.currency as string) ?? null,
+            p_data_source: 'reacher',
+            p_raw: c,
+          });
+
           const m = await reacher.campaignMetrics(shop.reacher_shop_id, String(id), start, end);
           rows += await upsert(
             'gmv_max_daily_metrics',

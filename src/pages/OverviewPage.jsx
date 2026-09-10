@@ -27,6 +27,33 @@ import {
   Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint, Delta,
 } from '../components/ui.jsx';
 
+/**
+ * The one-line explanation under Budget utilisation.
+ *
+ * Four states, because they are four different situations for the operator.
+ * A configured budget on a paused campaign is not a missing budget, and a
+ * utilisation ratio computed against a paused campaign's budget is not a
+ * measurement of anything — so those cases return a sentence, never a share.
+ */
+function budgetContext(budget, mg, cur) {
+  if (!budget) return null;
+  const set = budget.configuredDailyBudget;
+  switch (budget.state) {
+    case 'no_campaigns':
+      return 'no GMV Max campaigns on this shop';
+    case 'no_active':
+      return set
+        ? `no active campaign — ${money(set, cur)}/day is configured across `
+          + `${budget.campaignCount} paused campaign${budget.campaignCount === 1 ? '' : 's'}`
+        : `no active campaign — ${budget.campaignCount} paused, none with a budget on file`;
+    case 'no_budget_set':
+      return `${budget.activeCount} active campaign${budget.activeCount === 1 ? '' : 's'}, no budget on file`;
+    default:
+      return `${money(mg?.mean_daily_spend, cur)}/day over ${mg?.days ?? '—'} observed days`
+        + ` vs ${money(budget.activeDailyBudget, cur)}/day set now`;
+  }
+}
+
 export default function OverviewPage() {
   const { shop, scope } = useOutletContext();
   const [params] = useSearchParams();
@@ -210,10 +237,15 @@ export default function OverviewPage() {
       // and inventing a comparison for it would hide exactly the mismatch the
       // context line is there to disclose.
       delta: <span className="delta delta-none">model baseline — not a report-window figure</span>,
-      context: !facts.dailyBudget
-        ? 'no budget on file'
-        : `${money(mg?.mean_daily_spend, cur)}/day over ${mg?.days ?? '—'} observed days`
-          + ` vs ${money(facts.dailyBudget, cur)}/day set now`,
+      // NAME THE ACTUAL FACT.
+      //
+      // This said "no budget on file" whenever no campaign was enabled, which
+      // on the reviewed shop was wrong in the way that matters: all four
+      // campaigns had budgets configured, they were simply paused. "No budget
+      // on file" sends the operator to check whether their settings were lost;
+      // "no active campaign" sends them to the campaign that is off. Budget
+      // availability and campaign eligibility are separate facts.
+      context: budgetContext(facts.budget, mg, cur),
       hint: 'A share, not a measurement of this report. The numerator is the model baseline — mean daily spend across the '
         + `${mg?.days ?? 'observed'} days the spend model actually saw between ${scope.model.start} and ${scope.model.end}`
         + ` — and the denominator is the daily budget currently set on enabled campaigns. It is the same baseline the campaign`
