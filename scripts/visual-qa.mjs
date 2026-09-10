@@ -82,6 +82,11 @@ const ROUTES = [
   { path: '/organic', name: 'organic' },
   { path: '/attribution', name: 'attribution' },
   { path: '/data', name: 'data-status' },
+  // T29 names the Decision log among the pages that must open. It was built
+  // after this list and never added to it, so the whole loop UI was outside the
+  // route sweep — no overflow check, no forbidden-string check, no viewport
+  // check, on the one page an operator uses to make decisions.
+  { path: '/decisions', name: 'decision-log' },
 ];
 
 // Things that must never appear on a buyer screen.
@@ -1147,6 +1152,98 @@ await waitForData(page);
     /Unverified/.test(caps) && /Not available/.test(caps));
   await page.screenshot({ path: path.join(OUT, 'journey--capabilities.png') });
 }
+
+// ── T30: a drawer must be usable without a mouse ──────────────────────────
+//
+// The Drawer already traps Tab and remembers its opener. Neither was ever
+// tested, and an untested focus trap is the kind of thing that survives a
+// refactor by looking fine. A keyboard user who opens a drawer and cannot get
+// out of it, or who closes one and lands back at the top of the document, has
+// lost their place in a table of hundreds of rows.
+console.log('\n── T30: keyboard operation of the recommendation drawer ──');
+await page.goto(`${BASE}/overview`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+{
+  const opener = page.locator('.priority-actions button', { hasText: 'View evidence' }).first();
+  if (!(await opener.count())) {
+    check('no drawer on this shop to exercise', true);
+  } else {
+    await opener.focus();
+    const openerLabel = await opener.textContent();
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.drawer', { timeout: 15000 });
+    check('the drawer opens from the keyboard', await page.locator('.drawer').isVisible());
+
+    // FOCUS MOVES IN. Leaving focus behind on the page would let a keyboard
+    // user tab through content the drawer is covering.
+    //
+    // POLLED, not sampled once. The Drawer moves focus on the next animation
+    // frame, and waitForSelector resolves the moment the element appears —
+    // which can be before that frame. Reading activeElement immediately made
+    // this pass or fail depending on machine speed, and a flaky assertion is
+    // worse than none: it teaches you to ignore the failure.
+    let insideAfterOpen = false;
+    for (let i = 0; i < 40 && !insideAfterOpen; i += 1) {
+      insideAfterOpen = await page.evaluate(() =>
+        !!document.activeElement?.closest('.drawer'));
+      if (!insideAfterOpen) await page.waitForTimeout(50);
+    }
+    check('focus moves into the drawer', insideAfterOpen,
+      await page.evaluate(() => document.activeElement?.className || 'nothing focused'));
+
+    // FOCUS STAYS IN. Tab enough times to wrap past the last control; every
+    // stop must still be inside.
+    let escaped = null;
+    for (let i = 0; i < 25; i += 1) {
+      await page.keyboard.press('Tab');
+      const inside = await page.evaluate(() =>
+        !!document.activeElement?.closest('.drawer'));
+      if (!inside) {
+        escaped = await page.evaluate(() =>
+          `${document.activeElement?.tagName}.${document.activeElement?.className}`);
+        break;
+      }
+    }
+    check('Tab never escapes the drawer', escaped === null, `focus reached ${escaped}`);
+
+    // AND FOCUS COMES BACK. Closing returns to the control that opened it, so
+    // the operator resumes where they were rather than at the top of the page.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    check('Escape closes it', await page.locator('.drawer').count() === 0);
+    const returned = await page.evaluate(() => document.activeElement?.textContent || '');
+    check('focus returns to the control that opened it',
+      (returned || '').includes('View evidence'),
+      `focus landed on "${(returned || '').slice(0, 40)}"`);
+  }
+}
+
+// ── T30: a status must be readable without relying on colour ──────────────
+{
+  await page.goto(`${BASE}/data`, { waitUntil: 'domcontentloaded' });
+  await waitForData(page);
+  // Every status pill carries WORDS, not just a colour. Someone who cannot
+  // distinguish the greens from the reds still has to be able to read the page.
+  const pills = await page.locator('.status').evaluateAll((els) =>
+    els.map((e) => (e.textContent || '').trim()));
+  const wordless = pills.filter((t) => t.length === 0);
+  check('every status carries words, not colour alone',
+    wordless.length === 0, `${wordless.length} of ${pills.length} pills are empty`);
+}
+
+// ── T30: a wide table scrolls itself, never the document ──────────────────
+{
+  await page.setViewportSize({ width: 1024, height: 768 });
+  for (const p of ['/creatives', '/attribution', '/decisions']) {
+    await page.goto(`${BASE}${p}`, { waitUntil: 'domcontentloaded' });
+    await waitForData(page);
+    const bodyOverflows = await page.evaluate(() =>
+      document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    check(`${p} does not scroll the whole document sideways`, !bodyOverflows);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 
 // ── console health ──────────────────────────────────────────────────────────
 console.log('\n── the browser console ──');

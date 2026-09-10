@@ -95,7 +95,7 @@ pair that canonicalising made identical. No migration drops a column or a table.
 | Command | Result |
 |---|---|
 | `npm test` | **533 passed, 0 failed** |
-| `node scripts/visual-qa.mjs` | **148 passed, 0 failed** |
+| `node scripts/visual-qa.mjs` | **165 passed, 0 failed** (run three times, identical) |
 | `npm run check:loop` (T31) | **26 passed, 0 failed** |
 | `npm run check:decisions` | **16 passed, 0 failed** |
 | `npm run check:retention` (T01/T03) | **17 passed, 0 failed** |
@@ -141,14 +141,14 @@ for every check it never reached.
 | T10 organic baseline | `momentum-tests` — missing prior, zero baseline, sparse, renormalisation |
 | T13 creative navigation | `visual-qa` — exact ids and the finding's window survive the CTA |
 | T14 marginal model | `marginal-tests` — linear, saturating, negative, noisy, sparse, flat, out-of-range |
+| T29 browser regressions | `visual-qa` — all eight routes at four widths, including the Decision log |
+| T30 visual and accessibility | `visual-qa` — keyboard drawer operation, focus return, colour-independent status |
 | T32 external action boundary | `check:loop` — every non-GET request watched; zero external writes |
 | T04 accounting oracle | migration 039 verify — the basis partition sums to components to the cent |
 | T06 evidence basis | migration 039 + browser — lineage without doubling revenue |
 
-**30 of 32.** What remains: T12 (creative opportunity — BLOCKED on the same
-per-video delivery evidence as section 10), and T29/T30 (browser regressions and
-accessibility), which the 148-check gate substantially covers without being
-labelled case by case.
+**31 of 32.** What remains is **T12** alone — creative opportunity, blocked on the same
+per-video delivery evidence as section 10.
 
 ---
 

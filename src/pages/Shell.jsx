@@ -287,7 +287,17 @@ function DataStatusLink({ shop, scope, onOpen }) {
       <Icon d={I.data} />
       <span className="navlabel" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <span className="truncate">Data status</span>
-        <span className={`status status-${tone}`} style={{ padding: '0 6px', fontSize: 11 }} />
+        {/* READABLE WITHOUT COLOUR.
+            This was a bare coloured dot. The state was carried in the parent
+            button's title, so a screen reader could reach it — but somebody who
+            sees the dot and cannot separate the greens from the reds got no
+            information at all from the one standing indicator on the page.
+            The glyph differs by state, so the shape carries the meaning too,
+            and the label says it in words for anyone not looking. */}
+        <span className={`status status-${tone}`} style={{ padding: '0 6px', fontSize: 11 }}
+          role="img" aria-label={`Data status: ${label}`}>
+          {tone === 'ok' ? '●' : tone === 'warn' ? '▲' : '■'}
+        </span>
         {roasQ.data?.is_simulated && <span className="sourcetag sourcetag-simulated">demo</span>}
       </span>
     </button>
