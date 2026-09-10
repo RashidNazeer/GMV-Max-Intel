@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   shopAttribution, shopCreativeHealth, shopTopVideos, shopProducts, shopProductStats,
   shopPaidRoas, shopSpendDaily, listCampaigns, detectedSettingChanges, settingsEvidenceFrom,
-  shopSourceHealth,
+  shopSourceHealth, campaignStateInWindow,
 } from './api.js';
 import { fitSpendResponse, recoveryFor, TARGET } from './marginal.js';
 import { decide } from './decide.js';
@@ -38,6 +38,14 @@ export function useFacts(shop, scope) {
   // Needed to tell "the budget did not bind" apart from "no budget is on record
   // for the days analysed" — two answers that look identical in a ratio.
   const settingsFromQ = useQuery({ queryKey: ['setfrom', id], queryFn: () => settingsEvidenceFrom(id), enabled: on });
+  // What each campaign was DOING during the reported days. listCampaigns holds
+  // current state only, so without this a creative diagnosis cannot tell a
+  // fading asset from one that simply stopped being delivered.
+  const windowStateQ = useQuery({
+    queryKey: ['campwindow', id, scope.start, scope.end],
+    queryFn: () => campaignStateInWindow(id, scope.start, scope.end),
+    enabled: on,
+  });
   // Per-source DATE completeness. The decision pipeline had no completeness
   // input at all, so a guardrail could pass on a window missing a day.
   const healthQ = useQuery({
@@ -147,6 +155,7 @@ export function useFacts(shop, scope) {
     videos: videosQ.data?.rows || [],
     roas: roasQ.data,
     campaigns,
+    campaignWindowStates: windowStateQ.data ?? null,
     dailyBudget,
     // Structured budget availability. `dailyBudget` above is kept as-is (it is
     // the ACTIVE budget and several callers depend on that meaning); this says

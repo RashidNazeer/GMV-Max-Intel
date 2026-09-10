@@ -6,7 +6,8 @@
 // where an action must be SUPPRESSED — a pipeline that always finds something
 // to recommend is not arbitrating, it is just talking.
 import {
-  decide, features, ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS, MECHANISM, CAPABILITY,
+  decide, features, deliveryWindowState,
+  ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS, MECHANISM, CAPABILITY,
   DECISION_RECON_TOLERANCE,
 } from '../src/lib/decide.js';
 
@@ -76,7 +77,16 @@ console.log('\n── the case this exists for: creative constraint beats scalin
 
   const s = suppressedFor(f, ACTION.INCREASE_BUDGET);
   check('and it is suppressed with a reason, not dropped', !!s, true);
-  check('the reason names the constraint', /creative constraint/.test(s.why), true);
+  // THE REASON MUST BE THE BUDGET ACTION'S OWN EVIDENCE.
+  //
+  // This used to assert /creative constraint/, which was the creative finding
+  // VETOING the budget action wholesale. With no per-video delivery evidence
+  // that veto was an unproven diagnosis deciding the entire page. The budget
+  // action now fails on its own creativeSupply guardrail and says which
+  // measurement stopped it, which is inspectable in a way "a creative
+  // constraint is live" never was.
+  check('the reason cites the measurement, not a generic constraint claim',
+    /% of video revenue is on declining creative/.test(s.why), true);
   check('the finding carries its exact 61 ids', d.primary.affected_ids.length, 61);
   check('and routes to the creatives view', d.primary.drill_to, 'creatives');
 }
@@ -367,15 +377,21 @@ console.log('\n── a missing day is caught even when the totals agree ──'
   };
   const d = decide(shortDay);
   const all = d.all.flatMap((r) => r.guardrails || []).concat(d.primary?.guardrails || []);
-  const agree = all.find((x) => x.name === 'affiliate totals agree with Seller Center');
+  // The coverage check is named for its CRITERION now, not for "agreement".
+  // At 90.3% the old name said the totals agreed with Seller Center while 9.7%
+  // of affiliate revenue had no order line behind it — a passed check reading
+  // as a clean bill the source diagnostics contradicted.
+  const cover = all.find((x) => /affiliate order lines cover/.test(x.name));
   const dates = all.find((x) => x.name === 'every day of the report arrived');
 
-  check('the agreement check still passes — the totals do agree', agree?.passed, true);
+  check('the coverage check still passes — capture is inside the band', cover?.passed, true);
   check('but the date check fails', dates?.passed, false);
   check('and names the source and the shortfall',
     /affiliate is missing 1 day/.test(dates?.detail || ''), true);
   check('no guardrail is still called "affiliate evidence complete"',
     all.some((x) => x.name === 'affiliate evidence complete'), false);
+  check('and none claims the totals AGREE',
+    all.some((x) => /totals agree/.test(x.name)), false);
 
   // With no health data at all, completeness is UNAVAILABLE — never passed.
   const noHealth = { ...base, sourceHealth: null };
@@ -496,6 +512,150 @@ console.log('\n── reconciliation: reporting threshold vs decision threshold 
     clean.all.some((r) => r.action_code === ACTION.FIX_DATA), false);
   check('so a 1% gap no longer makes fixing data the primary action',
     clean.primary?.action === ACTION.FIX_DATA, false);
+}
+
+
+// ── a declining-video list is an OBSERVATION, not a diagnosis ──────────────
+//
+// The reviewed finding was titled "Creative is the constraint, not the budget",
+// asserted that spending harder "raises cost per order rather than volume", and
+// instructed the operator to brief replacements. The evidence behind all three
+// claims was a list of videos whose revenue fell.
+//
+// Revenue falls when a creative stops working AND when it stops being shown,
+// and those call for opposite actions. Acceptance cases T11 and T20.
+console.log('\n── creative findings are graded by the evidence actually present ──');
+{
+  const falling = {
+    ...base,
+    creative: { ...base.creative, declining_videos: 61, declining_gmv: 48800, top5_share: 0.55 },
+    decliningIds: Array.from({ length: 61 }, (_, i) => `v${i}`),
+  };
+
+  // 1. NO DELIVERY EVIDENCE — the live situation. Investigation, not diagnosis.
+  const unverified = decide(falling).all.find((r) => r.action_code === ACTION.REVIEW_CREATIVE);
+  check('it does not claim creative is the constraint',
+    /Creative is the constraint/.test(unverified.title), false);
+  check('it says delivery cannot be verified',
+    /delivery cannot be verified/i.test(unverified.title), true);
+  check('it does not promise that spending more raises cost per order',
+    /raises cost per order/.test(unverified.reason), false);
+  check('it does not instruct replacements',
+    /[Bb]rief replacements/.test(unverified.action_text), false);
+  check('it names what is missing', /still being delivered/.test(unverified.reason), true);
+  check('and it still hands over the exact videos', unverified.affected_ids.length, 61);
+
+  // THE CHANGE THAT MATTERS MOST. An unproven constraint vetoed every budget
+  // and Target ROI alternative, so a generic creative flag decided the page.
+  const dUnv = decide(falling);
+  const budgetSuppression = dUnv.suppressed.find((s) => s.action_code === ACTION.INCREASE_BUDGET);
+  check('the creative finding no longer vetoes the budget action itself',
+    /creative constraint is live/.test(budgetSuppression?.why || ''), false);
+
+  // 2. CAMPAIGNS PAUSED THROUGH THE WINDOW — a different explanation entirely.
+  const paused = decide({
+    ...falling,
+    campaignWindowStates: [
+      { campaign_id: 'c1', window_state: 'paused' },
+      { campaign_id: 'c2', window_state: 'paused' },
+    ],
+  }).all.find((r) => r.action_code === ACTION.REVIEW_CREATIVE);
+  check('a paused window is diagnosed as a delivery stop',
+    /campaigns were paused/i.test(paused.title), true);
+  check('and explicitly refuses the creative explanation',
+    /not evidence the creative stopped working/.test(paused.reason), true);
+  check('it is informational, not an emergency', paused.severity, 'info');
+
+  // 3. DELIVERY CONFIRMED — only here may the strong claim be made.
+  const dSup = decide({
+    ...falling,
+    deliveryEvidence: CAPABILITY.SUPPORTED,
+    campaignWindowStates: [{ campaign_id: 'c1', window_state: 'active' }],
+  });
+  const supported = dSup.all.find((r) => r.action_code === ACTION.REVIEW_CREATIVE);
+  check('with delivery held, creative IS named as the constraint',
+    /Creative is the constraint/.test(supported.title), true);
+  check('and the reason says why that follows',
+    /delivery continued/.test(supported.reason), true);
+  // suppressWhy is carried on the SUPPRESSED entry, not on the winning record.
+  check('only now does the creative finding veto scaling',
+    /binding constraint/.test(
+      dSup.suppressed.find((s) => s.action_code === ACTION.INCREASE_BUDGET)?.why || '',
+    ), true);
+
+  // 4. The three grades must actually differ.
+  check('the three grades produce three different titles',
+    new Set([unverified.title, paused.title, supported.title]).size, 3);
+}
+
+console.log('\n── the delivery-window reduction ──');
+{
+  check('no states at all is unknown', deliveryWindowState(null).state, 'unknown');
+  check('empty is unknown', deliveryWindowState([]).state, 'unknown');
+  check('all-unknown states stay unknown',
+    deliveryWindowState([{ window_state: 'unknown' }, { window_state: 'unknown' }]).state, 'unknown');
+  check('one active among unknowns is delivering',
+    deliveryWindowState([{ window_state: 'unknown' }, { window_state: 'active' }]).state, 'delivering');
+  check('all paused is paused',
+    deliveryWindowState([{ window_state: 'paused' }, { window_state: 'paused' }]).state, 'paused');
+  // A campaign that changed state mid-window WAS delivering for part of it, so
+  // it cannot be treated as a clean pause.
+  check('mixed counts as delivering',
+    deliveryWindowState([{ window_state: 'mixed' }]).state, 'delivering');
+  check('and mixed is counted as a partial window',
+    deliveryWindowState([{ window_state: 'mixed' }, { window_state: 'active' }]).partial, 1);
+}
+
+
+// ── capture is COVERAGE, not agreement ────────────────────────────────────
+//
+// The reviewed screen showed a passed check saying the affiliate totals agreed
+// with Seller Center while capture was 90.3% — nearly a tenth of reported
+// affiliate revenue had no order line behind it. A tolerance had been upgraded
+// into an agreement. Requirement in section 7: "If a threshold treats it as
+// usable for a particular investigation, name that criterion precisely."
+console.log('\n── affiliate capture is named for its criterion, not as agreement ──');
+{
+  const at = (capture) => {
+    const g = decide({
+      ...base,
+      attribution: { ...base.attribution, affiliate_capture: capture },
+      creative: { ...base.creative, declining_videos: 61, declining_gmv: 48800, top5_share: 0.55 },
+    }).all.flatMap((r) => r.guardrails || []);
+    return g.find((x) => /affiliate order lines cover/.test(x.name));
+  };
+
+  // The reviewed value.
+  const c903 = at(0.903);
+  check('90.3% passes, because it is inside the band', c903.passed, true);
+  check('the check is not called an agreement', /agree/.test(c903.name), false);
+  check('it names the band it is judged against',
+    /85%–105%/.test(c903.name) || /85–105/.test(c903.name), true);
+  // THE POINT. A pass must not read as "nothing is missing".
+  check('and the pass still names the missing evidence',
+    /9\.7% of affiliate revenue still has no order-line evidence/.test(c903.detail), true);
+
+  // Below the band.
+  const low = at(0.6);
+  check('60% fails', low.passed, false);
+  check('and says how far below the requirement it is',
+    /below the 85% this action needs/.test(low.detail), true);
+
+  // Above the band is a DIFFERENT failure: our lines exceed the source.
+  const over = at(1.2);
+  check('120% fails', over.passed, false);
+  check('and is described as different bases, not as missing evidence',
+    /measuring on different bases/.test(over.detail), true);
+
+  // Unmeasured is not a pass.
+  const none = at(null);
+  check('unmeasured capture is not a passed check', none.passed, false);
+  check('and says it was not measured', /has not been measured/.test(none.detail), true);
+
+  // A full match needs no shortfall sentence.
+  const full = at(1.0);
+  check('100% passes without claiming anything is missing',
+    /still has no order-line evidence/.test(full.detail || ''), false);
 }
 
 

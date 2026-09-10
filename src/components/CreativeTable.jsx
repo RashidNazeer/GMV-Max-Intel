@@ -109,8 +109,15 @@ export default function CreativeTable({
               {rows.map((v) => (
                 <tr key={v.video_id} className="media">
                   <td className="sticky-l">
+                    {/* The video itself is the link. A creative finding is not
+                        actionable from a title and a number — the operator has
+                        to watch the thing before deciding whether it is worth
+                        refreshing or simply finished. `to` is only set when we
+                        actually hold a URL, so a row without one stays plain
+                        text rather than offering a link that goes nowhere. */}
                     <Identity name={shortTitle(v)} title={v.title || v.video_id}
-                      sub={v.video_id} kind="video" />
+                      sub={v.video_id} kind="video"
+                      to={v.tiktok_url || undefined} external={!!v.tiktok_url} />
                   </td>
                   <td className="muted">@{v.creator_handle}</td>
                   <td><StatusLabel status={v.status} /></td>

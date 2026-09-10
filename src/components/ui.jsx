@@ -394,14 +394,53 @@ export const Thumb = ({ src, alt = '', kind = 'video' }) => (
     )
 );
 
-export function Identity({ src, name, sub, to, onClick, kind = 'video', title }) {
-  const label = <span className="ident-name clamp2" title={title || name}>{name}</span>;
+/**
+ * A thumbnail plus a name, optionally linked.
+ *
+ * `external` opens the link in a new tab. It exists because the destination for
+ * a creative is TikTok itself: the operator wants to WATCH the video, and
+ * navigating away from a half-read analysis to do that loses their place and
+ * their filters. A new tab keeps the report where it was.
+ *
+ * The thumbnail is inside the link too. A picture of a video that is not
+ * clickable is the most obviously clickable thing on the row, and reaching for
+ * it and getting nothing is the small failure that teaches people the table is
+ * inert.
+ */
+export function Identity({ src, name, sub, to, onClick, kind = 'video', title, external = false }) {
+  const label = (
+    <span className="ident-name clamp2" title={title || name}>
+      {name}
+      {external && to && <span className="ident-ext" aria-hidden="true"> ↗</span>}
+    </span>
+  );
+  const linked = to || onClick;
+  const linkProps = external && to
+    // noreferrer as well as noopener: the new tab must not be handed a
+    // window.opener it could navigate, and the shop's URL is not TikTok's
+    // business.
+    ? { target: '_blank', rel: 'noopener noreferrer' }
+    : {};
+  const thumb = <Thumb src={src} kind={kind} />;
+
   return (
     <div className="ident">
-      <Thumb src={src} kind={kind} />
+      {linked
+        ? (
+          <a className="ident-thumblink" href={to} onClick={onClick} {...linkProps}
+            tabIndex={-1} aria-hidden="true">
+            {thumb}
+          </a>
+        )
+        : thumb}
       <div className="ident-text">
-        {to || onClick
-          ? <a className="identity" href={to} onClick={onClick}>{label}</a>
+        {linked
+          ? (
+            <a className="identity" href={to} onClick={onClick} {...linkProps}
+              title={external && to ? `${title || name} — opens on TikTok in a new tab` : undefined}>
+              {label}
+            </a>
+          )
           : label}
         {sub && <div className="ident-sub truncate">{sub}</div>}
       </div>

@@ -167,6 +167,34 @@ const pct = (v, d = 0) => (v == null ? '—' : `${(v * 100).toFixed(d)}%`);
 const money = (v, c = 'USD') =>
   v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(v);
 
+/**
+ * Reduce per-campaign window states to the one fact a diagnosis needs: could
+ * anything have been delivering during the reported days?
+ *
+ *   delivering    at least one campaign was active for part of the window
+ *   paused        every campaign we can see was paused throughout
+ *   unknown       no observation covers the window, so we cannot say
+ *
+ * `unknown` is the common answer and it is the important one. Snapshots began
+ * 2026-09-08 and nothing earlier can be recovered, so for most historical
+ * windows this returns unknown — and a diagnosis that depends on delivery must
+ * decline rather than assume.
+ */
+export function deliveryWindowState(states) {
+  if (!Array.isArray(states) || !states.length) return { state: 'unknown', known: 0, total: 0 };
+  const known = states.filter((s) => s.window_state && s.window_state !== 'unknown');
+  if (!known.length) return { state: 'unknown', known: 0, total: states.length };
+  const anyLive = known.some((s) => s.window_state === 'active' || s.window_state === 'mixed');
+  return {
+    state: anyLive ? 'delivering' : 'paused',
+    known: known.length,
+    total: states.length,
+    // Campaigns that were live for part of the window but not all of it. A
+    // pause partway through is itself an explanation for revenue falling.
+    partial: known.filter((s) => s.window_state === 'mixed').length,
+  };
+}
+
 // ── RECONCILIATION HAS TWO THRESHOLDS, ON PURPOSE ───────────────────────────
 //
 // `recon_business_tolerance()` in the database is the REPORTING threshold. At
@@ -190,6 +218,14 @@ const money = (v, c = 'USD') =>
 // stays cautious. That band has not occurred in live data; it is a guard, not a
 // behaviour anyone sees today.
 export const DECISION_RECON_TOLERANCE = 0.03;
+
+// The band affiliate order-line coverage must sit inside for an action that
+// reasons about affiliate SHARES. It is a tolerance, not a definition of
+// agreement: at the low end 15% of reported affiliate revenue can be missing
+// and the check still passes, which is why the check names the shortfall even
+// when it passes. Above the top end our lines EXCEED the source, which is a
+// different failure — the two are counting different things.
+export const CAPTURE_BAND = [0.85, 1.05];
 
 /**
  * Does the component/total disagreement exceed what a DECISION can tolerate?
@@ -295,6 +331,29 @@ export function features(f = {}) {
     newVideos: n(c?.new_videos),
     baselineCoverage: n(c?.baseline_coverage),
     trendMeasurable: c?.trend_measurable !== false,
+
+    // ── DELIVERY EVIDENCE: WAS THE VIDEO STILL BEING SHOWN? ─────────────────
+    //
+    // Falling revenue on a video has at least two ordinary explanations, and
+    // they call for opposite actions: the creative stopped working, or it
+    // stopped being DELIVERED. Telling them apart needs per-video exposure
+    // inside the reporting window — impressions or spend, at the video grain.
+    //
+    // We do not have it. video_performance carries `views`, which is LIFETIME
+    // and does not move with the report's date filter, so it cannot say whether
+    // a video was shown during these particular days. Reacher exposes no
+    // per-video spend at all. Passed in rather than hardcoded so a future
+    // integration can supply it and the strong branch below becomes reachable
+    // without touching the reasoning.
+    deliveryEvidence: f.deliveryEvidence || CAPABILITY.UNAVAILABLE,
+
+    // What each campaign was doing DURING the report, from campaign_state_in_
+    // window(). Current status cannot answer it: campaigns that are paused now
+    // may have run all week, and revenue falling after a known pause is not
+    // evidence that the creative decayed. `unknown` is the honest answer for
+    // any window our snapshots do not cover, and it stays `unknown` — never
+    // extrapolated backwards from today.
+    campaignWindowStates: Array.isArray(f.campaignWindowStates) ? f.campaignWindowStates : null,
     // The diagnostic window is anchored to the CUTOFF and no longer follows the
     // report length. Both are carried so a recommendation can state which
     // window its evidence came from.
@@ -365,6 +424,54 @@ const CHECKS = {
     ? { passed: false, name: 'revenue reconciles', detail: `components differ from total shop GMV by ${pct(x.reconciliationPct, 1)}` }
     : { passed: true, name: 'revenue reconciles' }),
 
+  // ── WAS THE CREATIVE STILL BEING SHOWN? ─────────────────────────────────
+  // The check that decides whether a creative DIAGNOSIS is permitted at all.
+  // Revenue falling on a video means the creative stopped working OR it stopped
+  // being delivered, and those call for opposite actions. Separating them needs
+  // per-video exposure inside the window, which the integration does not
+  // provide (`views` is lifetime and does not move with the date filter). So
+  // this fails, deliberately and permanently, until a source supplies it.
+  deliveryEvidence: (x) => (x.deliveryEvidence === CAPABILITY.SUPPORTED
+    ? { passed: true, name: 'delivery evidence available for the affected videos' }
+    : {
+        passed: false,
+        name: 'delivery evidence available for the affected videos',
+        detail: x.deliveryEvidence === CAPABILITY.UNKNOWN
+          ? 'whether per-video delivery can be read from this account has not been established'
+          : 'no per-video impressions or spend inside the report window — lifetime views cannot show whether a video was still being shown during these days',
+      }),
+
+  // ── WAS ANYTHING RUNNING? ───────────────────────────────────────────────
+  // Three states, because "we know it was paused" and "we cannot tell" lead
+  // somewhere different. A pause is an explanation; not knowing is a reason to
+  // go and look.
+  campaignStateKnown: (x) => {
+    const d = deliveryWindowState(x.campaignWindowStates);
+    if (d.state === 'unknown') {
+      return {
+        passed: false,
+        name: 'campaign state during the report is known',
+        detail: x.campaignWindowStates
+          ? 'no settings observation covers these dates — campaign history began 2026-09-08 and earlier state cannot be recovered'
+          : 'campaign state for the reported days was not retrieved',
+      };
+    }
+    if (d.state === 'paused') {
+      return {
+        passed: false,
+        name: 'campaign state during the report is known',
+        detail: `every campaign observed in this window was paused, so falling revenue follows a delivery stop rather than a creative decline`,
+      };
+    }
+    return {
+      passed: true,
+      name: 'campaign state during the report is known',
+      detail: d.partial
+        ? `${d.partial} campaign${d.partial === 1 ? '' : 's'} changed state during the window`
+        : undefined,
+    };
+  },
+
   // NAMED FOR WHAT IT MEASURES. This tests whether two sources AGREE on the
   // affiliate total — it says nothing whatever about whether every day of the
   // window arrived. It was called "affiliate evidence complete", and it read
@@ -372,13 +479,41 @@ const CHECKS = {
   // Agreement and completeness are different questions with different fixes,
   // and one of them was wearing the other's name. Date completeness is checked
   // separately by `datesComplete` below, from shop_source_health.
-  capture: (x) => (x.capture != null && (x.capture < 0.85 || x.capture > 1.05)
-    ? { passed: false, name: 'affiliate totals agree with Seller Center', detail: `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate revenue — the two sources disagree` }
-    : {
-        passed: true,
-        name: 'affiliate totals agree with Seller Center',
-        detail: x.capture == null ? undefined : `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate figure`,
-      }),
+  // ── COVERAGE, AND THE BAND THIS ACTION NEEDS IT TO BE IN ────────────────
+  //
+  // It was called "affiliate totals agree with Seller Center", and at 90.3% it
+  // PASSED and said the totals agree. They do not: 9.7% of the affiliate
+  // revenue Seller Center reports has no order line behind it. What is true is
+  // narrower — coverage is inside the band this particular action needs — and
+  // the check now says exactly that instead of upgrading a tolerance into an
+  // agreement. A passed check must never read as a clean bill the source
+  // diagnostics contradict.
+  capture: (x) => {
+    const lo = CAPTURE_BAND[0];
+    const hi = CAPTURE_BAND[1];
+    const name = `affiliate order lines cover ${pct(lo, 0)}–${pct(hi, 0)} of the reported total`;
+    if (x.capture == null) {
+      return { passed: false, name, detail: 'affiliate capture has not been measured for this window' };
+    }
+    if (x.capture < lo || x.capture > hi) {
+      return {
+        passed: false,
+        name,
+        detail: x.capture > hi
+          ? `our order lines exceed Seller Center's affiliate figure by ${pct(x.capture - 1, 1)}, so the two sources are measuring on different bases`
+          : `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate revenue, below the ${pct(lo, 0)} this action needs — ${pct(1 - x.capture, 1)} has no order-line evidence`,
+      };
+    }
+    return {
+      passed: true,
+      name,
+      // Names the shortfall even on the pass. The band is a tolerance for THIS
+      // action, not a statement that nothing is missing.
+      detail: x.capture < 1
+        ? `our order lines account for ${pct(x.capture, 1)}, inside the band this action tolerates — ${pct(1 - x.capture, 1)} of affiliate revenue still has no order-line evidence and is not counted as measured`
+        : `our order lines account for ${pct(x.capture, 1)} of Seller Center's affiliate figure`,
+    };
+  },
 
   // THE CHECK THAT WAS MISSING. Whether the days actually arrived — from
   // shop_source_health, which measures coverage against the requested window
@@ -611,26 +746,108 @@ const cReviewCreative = (x) => {
     bits.push(`the top 5 videos carry ${pct(conc)} of affiliate revenue`);
   }
 
-  return {
+  // ── WHAT THIS OBSERVATION DOES AND DOES NOT ESTABLISH ────────────────────
+  //
+  // It used to be titled "Creative is the constraint, not the budget", assert
+  // that spending harder "raises cost per order rather than volume", and
+  // instruct the operator to brief replacements. All three are causal claims,
+  // and the evidence behind them is a list of videos whose revenue fell.
+  //
+  // A list of declining videos is an OBSERVATION. Revenue can fall because the
+  // creative stopped working, or because it stopped being delivered, or because
+  // the product went out of stock, or because the campaign was paused. Choosing
+  // the first of those and calling it the constraint is a diagnosis the data
+  // cannot carry — and it then suppressed every budget and Target ROI
+  // alternative on the strength of it.
+  //
+  // So the finding is now graded by the evidence actually present:
+  //
+  //   paused      campaigns observed paused through the window. Revenue fell
+  //               after delivery stopped. Creative decline is not the leading
+  //               explanation and must not be presented as one.
+  //   unverified  no per-video delivery evidence, or campaign state unknown.
+  //               An INVESTIGATION. It names the videos and the dates, and it
+  //               suppresses NOTHING, because an unproven constraint has no
+  //               business vetoing a budget decision.
+  //   supported   delivery evidence exists and shows continued exposure. Only
+  //               here may the finding claim creative is the binding
+  //               constraint. Unreachable today; the branch stays so that
+  //               acquiring the evidence changes the output, not the reasoning.
+  const delivery = deliveryWindowState(x.campaignWindowStates);
+  const hasDeliveryEvidence = x.deliveryEvidence === CAPABILITY.SUPPORTED;
+  const grade = delivery.state === 'paused' ? 'paused'
+    : (hasDeliveryEvidence && delivery.state === 'delivering') ? 'supported'
+      : 'unverified';
+
+  const checks = run(x, ['capture', 'deliveryEvidence', 'campaignStateKnown', 'datesComplete']);
+  const common = {
     action: ACTION.REVIEW_CREATIVE,
-    severity: share >= 0.5 || conc >= 0.6 ? 'critical' : 'warning',
-    title: 'Creative is the constraint, not the budget',
-    shortFinding: (x) => `${x.decliningVideos} videos carrying ${pct(x.decliningShare)} of video revenue declined more than 30%`,
-    reason: `${bits.join(', and ')}. Spending harder against creative that is already fading raises cost per order rather than volume — the delivery finds the same audience with a weaker asset.`,
-    actionText: 'Brief replacements before changing spend. Open the affected videos to see which are worth refreshing and which are simply finished.',
+    shortFinding: (y) => `${y.decliningVideos} videos carrying ${pct(y.decliningShare)} of video revenue declined more than 30%`,
     evidence: bits,
-    checks: run(x, ['capture']),
+    checks,
     revenueAffected: x.decliningGmv,
     affectedIds: x.decliningIds,
     drillTo: 'creatives',
     lane: 'media',
+  };
+
+  if (grade === 'paused') {
+    return {
+      ...common,
+      severity: 'info',
+      title: 'Video revenue fell while campaigns were paused',
+      reason: `${bits.join(', and ')}. Every campaign observed in this window was paused, so the fall follows delivery stopping. That is not evidence the creative stopped working, and refreshing assets would not address it.`,
+      actionText: 'Check why delivery is stopped before judging the creative. The videos are listed so their performance can be read against the period they were actually being shown.',
+      confidenceParts: [
+        { name: 'measured from classified order lines', value: 1 },
+        { name: 'campaign state observed in window', value: delivery.known / (delivery.total || 1) },
+      ],
+      // Says nothing about budget or Target ROI, so it vetoes neither.
+      suppresses: [],
+    };
+  }
+
+  if (grade === 'supported') {
+    return {
+      ...common,
+      severity: share >= 0.5 || conc >= 0.6 ? 'critical' : 'warning',
+      title: 'Creative is the constraint, not the budget',
+      reason: `${bits.join(', and ')}, while delivery continued through the window. With exposure held and revenue falling, the assets are the limiting factor rather than the spend behind them.`,
+      actionText: 'Brief replacements before changing spend. Open the affected videos to see which are worth refreshing and which are simply finished.',
+      confidenceParts: [
+        { name: 'measured from classified order lines', value: 1 },
+        { name: 'trend baseline coverage', value: x.baselineCoverage ?? 0.5 },
+        { name: 'delivery confirmed in window', value: 1 },
+      ],
+      // Only a DEMONSTRATED constraint outranks a scaling action.
+      suppresses: [ACTION.INCREASE_BUDGET, ACTION.DECREASE_TARGET_ROI, ACTION.TEST_MAX_DELIVERY],
+      suppressWhy: 'creative is shown to be the binding constraint: delivery held while revenue fell',
+    };
+  }
+
+  const missing = [];
+  if (!hasDeliveryEvidence) missing.push('whether these videos were still being delivered');
+  if (delivery.state === 'unknown') missing.push('whether the campaigns were running during these dates');
+
+  return {
+    ...common,
+    // An investigation is worth doing, and it is not an emergency. Severity is
+    // what SEVERITY_WEIGHT scores on, so overstating it here is how an
+    // unproven finding wins a ranking it has not earned.
+    severity: 'warning',
+    title: 'Video revenue is falling, and delivery cannot be verified',
+    reason: `${bits.join(', and ')}. What this does not establish is ${missing.join(', or ')}. Falling revenue on a video is consistent with a creative that stopped working and with one that stopped being shown, and the two call for opposite actions.`,
+    actionText: 'Open the affected videos and check delivery before deciding anything about the assets. If they are still being shown, the creative is the next thing to look at; if they are not, that is the finding.',
     confidenceParts: [
       { name: 'measured from classified order lines', value: 1 },
       { name: 'trend baseline coverage', value: x.baselineCoverage ?? 0.5 },
+      { name: 'delivery evidence', value: 0 },
     ],
-    // The whole point of the arbitration: this is what a scaling action loses to.
-    suppresses: [ACTION.INCREASE_BUDGET, ACTION.DECREASE_TARGET_ROI, ACTION.TEST_MAX_DELIVERY],
-    suppressWhy: 'a material creative constraint is live',
+    // SUPPRESSES NOTHING. This is the change that matters most: an unproven
+    // creative constraint used to veto every budget and Target ROI alternative,
+    // so a generic creative flag decided the whole page. Those actions now
+    // stand or fall on their own guardrails.
+    suppresses: [],
   };
 };
 

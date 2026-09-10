@@ -165,6 +165,21 @@ export const detectedSettingChanges = (shopId, since = null) =>
   rpc('campaign_setting_changes', { p_shop_id: shopId, p_since: since });
 
 /**
+ * What each campaign was doing DURING a reporting window.
+ *
+ * Distinct from listCampaigns(), which holds CURRENT state only and therefore
+ * cannot answer it: campaigns paused today may have run all week, and revenue
+ * falling after a known pause is not evidence that the creative decayed.
+ *
+ * Returns active | paused | mixed | unknown per campaign. `unknown` is the
+ * honest answer for any window our snapshots do not cover — settings history
+ * began 2026-09-08 and Reacher exposes no way to recover anything earlier — and
+ * it stays unknown rather than being extrapolated backwards from today.
+ */
+export const campaignStateInWindow = (shopId, s, e) =>
+  rpc('campaign_state_in_window', { p_shop_id: shopId, p_start: s, p_end: e });
+
+/**
  * The earliest settings snapshot we hold for this shop — the date before which
  * NO effective campaign setting can be established.
  *

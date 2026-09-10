@@ -372,6 +372,18 @@ table.data.fixed { table-layout: fixed; }
 .ident-name { font-size: 14px; line-height: 18px; }
 .ident-sub  { font-size: 12px; line-height: 16px; color: var(--text-2); }
 
+/* The thumbnail as a link. It carries the same destination as the title, so it
+   is aria-hidden and out of the tab order: a keyboard or screen-reader user
+   should meet ONE link per creative, not the same one twice. Sighted users
+   still get the affordance they instinctively reach for. */
+.ident-thumblink { display: inline-flex; flex: 0 0 auto; border-radius: var(--r-control); }
+.ident-thumblink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ident-thumblink:hover .thumb { border-color: var(--accent); }
+/* Marks a link that leaves the app. Kept in the flow of the title so it wraps
+   with it rather than hanging off a clamped second line. */
+.ident-ext { color: var(--text-3); font-size: 11px; }
+.identity:hover .ident-ext { color: var(--accent-text); }
+
 /* ── drawer ─────────────────────────────────────────────────────────────── */
 /* Rendered in a portal at the document root, so it can never inherit the
    table's overflow clipping or its horizontal scroll coordinate system. */

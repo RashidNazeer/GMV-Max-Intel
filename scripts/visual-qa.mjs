@@ -305,6 +305,35 @@ await waitForData(page);
 const pagerText = await page.locator('.pager').first().innerText().catch(() => '');
 check('the table states the whole population', /of\s[\d,]+/.test(pagerText), pagerText.slice(0, 80));
 
+// ── the creative itself must be openable ──────────────────────────────────
+// A creative finding is not actionable from a title and a number: the operator
+// has to WATCH the video before deciding whether it is worth refreshing or
+// simply finished. Asserted on the real anchor, not on the data, because the
+// failure mode here is a link that renders and goes nowhere.
+{
+  const link = page.locator('td.sticky-l a.identity').first();
+  const hasLink = await link.count();
+  check('the creative name is a link', !!hasLink);
+  if (hasLink) {
+    const href = await link.getAttribute('href');
+    const target = await link.getAttribute('target');
+    const rel = await link.getAttribute('rel');
+    check('it points at the video on TikTok', /^https:\/\/www\.tiktok\.com\/@[^/]+\/video\/\d+/.test(href || ''), href);
+    check('it opens in a new tab so the report is not lost', target, '_blank');
+    // noopener stops the opened tab reaching back through window.opener.
+    check('and it is opened safely', /noopener/.test(rel || '') && /noreferrer/.test(rel || ''), rel);
+
+    // The thumbnail carries the same destination, and must NOT be a second
+    // stop for keyboard users reaching the same place twice.
+    const thumbLink = page.locator('td.sticky-l a.ident-thumblink').first();
+    if (await thumbLink.count()) {
+      check('the thumbnail links to the same video',
+        await thumbLink.getAttribute('href'), href);
+      check('but is skipped by the keyboard', await thumbLink.getAttribute('tabindex'), '-1');
+    }
+  }
+}
+
 const firstBefore = await page.locator(SEL.firstCell).first().innerText().catch(() => '');
 const nextBtn = page.locator(SEL.nextPage);
 if (await nextBtn.count() && await nextBtn.isEnabled()) {
