@@ -1050,6 +1050,28 @@ check('it no longer claims to count the whole report window',
   await page.screenshot({ path: path.join(OUT, 'journey--organic-baseline.png') });
 }
 
+// ── the capability registry explains what the tool will not say ───────────
+// Several findings are withheld for good reasons that were previously
+// invisible: no per-video delivery evidence, no settings history, Creative
+// Boost unverifiable from read-only access. Naming them turns "why will it not
+// tell me" into a question somebody can ask the provider.
+await page.goto(`${BASE}/data`, { waitUntil: 'domcontentloaded' });
+await waitForData(page);
+{
+  const caps = await page.evaluate(() => document.body.innerText);
+  check('the data page lists what the integration provides',
+    /What this integration provides/i.test(caps));
+  check('an unavailable capability names what we observed',
+    /lifetime figure|returns empty|campaign level only/i.test(caps));
+  check('and what would change it',
+    /would|exposing|populating/i.test(caps));
+  // Unverified is NOT the same as unavailable, and collapsing them would turn
+  // "nobody could check" into "it does not work".
+  check('unverified is distinguished from unavailable',
+    /Unverified/.test(caps) && /Not available/.test(caps));
+  await page.screenshot({ path: path.join(OUT, 'journey--capabilities.png') });
+}
+
 // ── console health ──────────────────────────────────────────────────────────
 console.log('\n── the browser console ──');
 check('no uncaught exceptions', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));

@@ -29,6 +29,7 @@ import {
   moneyExact, pct, numOrNull,
 } from '../lib/api.js';
 import ReportToolbar from '../components/ReportToolbar.jsx';
+import CapabilityPanel from '../components/CapabilityPanel.jsx';
 import {
   Panel, PageHeader, MetricSummary, Notice, Drawer, useDrawer,
   Skeleton, EmptyState, SourceTag,
@@ -276,6 +277,15 @@ export default function DataStatusPage() {
           measured shop — a database trigger refuses to let one shop hold both.
         </Notice>
       )}
+
+      {/* WHAT THE INTEGRATION CANNOT DO, AND WHY.
+          These states used to live in code comments and a hardcoded constant,
+          so an operator could see that an action was unavailable but never
+          why, nor when anyone last checked. Reading it from the registry also
+          means it stops being a property of the universe: a shop with a
+          different ad account permission, or a provider that ships the
+          endpoint next month, is one row rather than a code change. */}
+      <CapabilityPanel shop={shop} />
 
       <Panel
         title="Sources"

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "node scripts/preview.mjs",
-    "test": "node scripts/classify-tests.mjs && node scripts/window-tests.mjs && node scripts/recommend-tests.mjs && node scripts/decide-tests.mjs && node scripts/budget-tests.mjs && node scripts/status-tests.mjs && node scripts/marginal-tests.mjs && node scripts/momentum-tests.mjs && node scripts/copy-guard.mjs",
+    "test": "node scripts/classify-tests.mjs && node scripts/window-tests.mjs && node scripts/recommend-tests.mjs && node scripts/decide-tests.mjs && node scripts/evidence-tests.mjs && node scripts/budget-tests.mjs && node scripts/status-tests.mjs && node scripts/marginal-tests.mjs && node scripts/momentum-tests.mjs && node scripts/copy-guard.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "check:decisions": "node scripts/check-decision-log.mjs",
     "check:retention": "node scripts/check-retention.mjs",

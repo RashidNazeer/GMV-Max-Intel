@@ -350,3 +350,28 @@ export const reviewedHistory = (shopId, action, entityId = null) =>
  * launder a selection into a result.
  */
 export const learningReplay = (shopId) => rpc('learning_replay', { p_shop_id: shopId });
+
+/* ── what the integration can and cannot do ───────────────────────────────── */
+
+export const CAPABILITY_LABEL = {
+  affiliate_transactions: 'Affiliate order lines',
+  shop_gmv_timeseries: 'Daily shop GMV',
+  campaign_settings_read: 'Campaign settings (Target ROI, budget)',
+  campaign_change_feed: 'Settings change history',
+  per_video_spend: 'Per-video delivery and spend',
+  per_product_spend: 'Per-product spend',
+  spend_by_surface: 'Spend split by surface',
+  campaign_impressions_clicks: 'Campaign impressions and clicks',
+  creative_boost: 'Creative Boost',
+};
+
+/**
+ * The capability registry for a shop.
+ *
+ * Read from the database rather than a constant, because "per-video spend is
+ * not available" is true for this provider, on these shops, today — not a
+ * property of the universe. Each row carries the evidence that established it
+ * and the dependency that would change it.
+ */
+export const shopCapabilities = (shopId) =>
+  rpc('capabilities_for_shop', { p_shop_id: shopId });
