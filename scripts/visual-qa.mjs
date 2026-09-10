@@ -1050,6 +1050,36 @@ check('it no longer claims to count the whole report window',
   await page.screenshot({ path: path.join(OUT, 'journey--organic-baseline.png') });
 }
 
+// ── evidence basis is a PARTITION, never extra revenue ───────────────
+// Migration 022 exists because an affiliate excess was added to a total that
+// already contained it, and every reported gap came out exactly twice the real
+// one. A basis view that reads as additional revenue is the same mistake with a
+// new name, so this asserts on the rendered page that it does not.
+await page.goto(BASE + "/attribution", { waitUntil: "domcontentloaded" });
+await waitForData(page);
+{
+  const basis = await page.evaluate(() => document.body.innerText);
+  check("attribution shows how each figure was established",
+    /How each figure was established/i.test(basis));
+  check("it says plainly that this is not additional revenue",
+    /[Nn]ot additional revenue|same revenue as above|counted once/.test(basis));
+  check("the four bases are labelled",
+    /Measured/.test(basis) && /Estimated/.test(basis));
+  // TWO DENOMINATORS, BOTH NAMED. They differ by exactly the residual.
+  check("both denominators are named, not just one",
+    /of components/i.test(basis) && /of shop GMV/i.test(basis));
+  // The residual must be visibly OUTSIDE the split — and stated either way.
+  // This first failed because the gate lands on Cutler, which reconciles to
+  // the cent, so the notice correctly rendered nothing. The check was wrong to
+  // demand a residual unconditionally, and the panel was wrong to say nothing:
+  // "they agree exactly" must be distinguishable from "we did not check".
+  check("the residual is stated, whether or not there is one",
+    /Not part of the split/i.test(basis));
+  check("and the basis is described as evidence, not as trust or cause",
+    /not how much to trust it/i.test(basis));
+  await page.screenshot({ path: path.join(OUT, "journey--evidence-basis.png") });
+}
+
 // ── the capability registry explains what the tool will not say ───────────
 // Several findings are withheld for good reasons that were previously
 // invisible: no per-video delivery evidence, no settings history, Creative

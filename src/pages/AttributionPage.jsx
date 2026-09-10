@@ -35,6 +35,7 @@ import {
 } from '../components/ui.jsx';
 import { COPY } from '../lib/copy.js';
 import { DECISION_RECON_TOLERANCE } from '../lib/decide.js';
+import EvidenceBasis from '../components/EvidenceBasis.jsx';
 
 /**
  * ONE definition of a channel: where its amount comes from, what colour stands
@@ -245,6 +246,13 @@ export default function AttributionPage() {
       <MetricSummary items={metrics} source="measured" loading={roasQ.isPending} />
 
       <RevenueMix a={a} cur={cur} />
+
+      {/* The SAME pounds as the mix above, re-labelled by how well each is
+          evidenced. Placed immediately after it so the relationship is
+          obvious: this is not more revenue, it is the same revenue seen a
+          second way. The partition sums to the component total exactly, and
+          the residual is shown outside it. */}
+      <EvidenceBasis shop={shop} scope={scope} />
 
       {dailyQ.error ? (
         <Panel title="Daily revenue by channel">

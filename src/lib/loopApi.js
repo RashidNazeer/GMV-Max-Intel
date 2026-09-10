@@ -375,3 +375,25 @@ export const CAPABILITY_LABEL = {
  */
 export const shopCapabilities = (shopId) =>
   rpc('capabilities_for_shop', { p_shop_id: shopId });
+
+/* ── how each pound was established ───────────────────────────────────────── */
+
+export const BASIS_TONE = {
+  measured: 'ok',
+  estimated: 'warn',
+  unclassified: 'info',
+  modelled: 'info',
+  residual: 'bad',
+};
+
+/**
+ * The evidence-basis partition of a shop window.
+ *
+ * A PARTITION of the existing components, never an additional decomposition:
+ * the rows where `is_partition` is true sum to component_total exactly. The
+ * residual comes back with `is_partition` false, because folding it into a
+ * bucket would make the split look exact and hide the disagreement the
+ * reconciliation work exists to surface.
+ */
+export const attributionBasis = (shopId, start, end) =>
+  rpc('attribution_basis', { p_shop_id: shopId, p_start: start, p_end: end });
