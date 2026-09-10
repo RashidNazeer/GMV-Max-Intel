@@ -167,6 +167,46 @@ const pct = (v, d = 0) => (v == null ? '—' : `${(v * 100).toFixed(d)}%`);
 const money = (v, c = 'USD') =>
   v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(v);
 
+// ── RECONCILIATION HAS TWO THRESHOLDS, ON PURPOSE ───────────────────────────
+//
+// `recon_business_tolerance()` in the database is the REPORTING threshold. At
+// 10% it decides whether a source disagreement is worth colouring on a screen.
+// The owner asked for that and it was the right call: a ~1% gap between two
+// providers, which nobody can close, was being painted as an exception on every
+// page.
+//
+// It is NOT the right number for deciding how to spend money. This engine
+// refuses to reason about channel SHARES while the components and the source
+// total disagree materially — and "material enough to act on" is a much tighter
+// bar than "worth mentioning". Sharing one number meant that quietening the
+// screens silently also made the engine willing to size a budget on top of a 9%
+// disagreement, which nobody asked for.
+//
+// So they are separated: screens at 10% (the database), decisions at 3% (here).
+//
+// Below 3% the engine treats the components as usable — that is what fixes the
+// real complaint, because at Biostime's ~1% gap `fix_data` no longer outranks
+// every media action. Between 3% and 10% the screens stay quiet and the engine
+// stays cautious. That band has not occurred in live data; it is a guard, not a
+// behaviour anyone sees today.
+export const DECISION_RECON_TOLERANCE = 0.03;
+
+/**
+ * Does the component/total disagreement exceed what a DECISION can tolerate?
+ * Deliberately independent of `reconciliation_status`, which now answers the
+ * reporting question and would say "rounding" at 9%.
+ */
+function reconExceedsDecisionTolerance(a) {
+  if (!a) return false;
+  // 'reconciled' is exact agreement, or agreement inside the ABSOLUTE rounding
+  // tolerance. A sub-dollar gap is not a data problem at any percentage, and on
+  // a near-zero-GMV window the percentage is meaningless.
+  if (a.reconciliation_status === 'reconciled') return false;
+  const p = n(a.reconciliation_pct);
+  if (p == null) return false;
+  return Math.abs(p) > DECISION_RECON_TOLERANCE;
+}
+
 // ── 1. FEATURES ─────────────────────────────────────────────────────────────
 // One normalised view of the evidence, so no candidate re-derives a number
 // slightly differently from its neighbour.
@@ -199,9 +239,15 @@ export function features(f = {}) {
     // "affiliate evidence complete" passed on a window with a missing day.
     sourceCoverage: Array.isArray(f.sourceHealth) ? f.sourceHealth : null,
     coverage: n(a?.attribution_coverage),
+    // REPORTING ONLY. This is the database's 10% verdict, kept so a panel can
+    // show what the screens show. NOTHING in the decision pipeline may read
+    // it — that was the bug this separation fixes. Use reconExceedsDecision.
     reconciliationStatus: a?.reconciliation_status || null,
     reconciliationGap: n(a?.reconciliation_gap),
     reconciliationPct: n(a?.reconciliation_pct),
+    // The DECISION view of the same gap — see DECISION_RECON_TOLERANCE.
+    // Every candidate and guardrail below reads this, never the status.
+    reconExceedsDecision: reconExceedsDecisionTolerance(a),
     totalGmv: n(a?.total_gmv),
 
     // Spend side. null means "no spend data", which is NOT zero spend.
@@ -311,7 +357,11 @@ const CHECKS = {
     ? { passed: true, name: 'marginal return estimated' }
     : { passed: false, name: 'marginal return estimated', detail: `the spend-response model returned ${x.marginalStatus || 'no result'}` }),
 
-  reconciled: (x) => (x.reconciliationStatus === 'exception'
+  // JUDGED AT THE DECISION THRESHOLD, NOT THE REPORTING ONE. This gate is
+  // what stops the engine sizing a budget from channel shares that do not
+  // add up, so it keeps its own 3% bar even though the screens now go quiet
+  // until 10%. See DECISION_RECON_TOLERANCE.
+  reconciled: (x) => (x.reconExceedsDecision
     ? { passed: false, name: 'revenue reconciles', detail: `components differ from total shop GMV by ${pct(x.reconciliationPct, 1)}` }
     : { passed: true, name: 'revenue reconciles' }),
 
@@ -488,7 +538,7 @@ const REVIEW = {
 
 const cFixData = (x) => {
   const problems = [];
-  if (x.reconciliationStatus === 'exception') {
+  if (x.reconExceedsDecision) {
     problems.push(`the channel components differ from total shop GMV by ${pct(x.reconciliationPct, 1)} (${money(x.reconciliationGap, x.currency)})`);
   }
   if (x.capture != null && x.capture > 1.02) {
@@ -506,7 +556,7 @@ const cFixData = (x) => {
   // to the cent; what is low is COVERAGE, because a quarter of affiliate
   // revenue sits in Partner-tab campaigns Reacher does not ingest yet. Seen on
   // screen in browser QA, sitting above a reconciliation status of "reconciled".
-  const mismatched = x.reconciliationStatus === 'exception' || (x.capture != null && x.capture > 1.02);
+  const mismatched = x.reconExceedsDecision || (x.capture != null && x.capture > 1.02);
   const title = mismatched
     ? 'Revenue does not reconcile against its own source'
     : `${pct(1 - x.capture)} of affiliate revenue has no order-line evidence`;
@@ -515,7 +565,7 @@ const cFixData = (x) => {
     action: ACTION.FIX_DATA,
     // A gap Reacher has already explained and is fixing is context, not a
     // repair task sitting at the top of someone's queue.
-    severity: x.reconciliationStatus === 'exception' ? 'critical' : mismatched ? 'warning' : 'info',
+    severity: x.reconExceedsDecision ? 'critical' : mismatched ? 'warning' : 'info',
     title,
     // SCOPED TO WHAT IT ACTUALLY AFFECTS.
     //

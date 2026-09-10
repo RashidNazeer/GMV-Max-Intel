@@ -5,7 +5,10 @@
 // with nothing deciding between them. These tests are weighted toward the cases
 // where an action must be SUPPRESSED — a pipeline that always finds something
 // to recommend is not arbitrating, it is just talking.
-import { decide, ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS, MECHANISM, CAPABILITY } from '../src/lib/decide.js';
+import {
+  decide, features, ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS, MECHANISM, CAPABILITY,
+  DECISION_RECON_TOLERANCE,
+} from '../src/lib/decide.js';
 
 let pass = 0; let fail = 0;
 const check = (name, got, want) => {
@@ -114,9 +117,14 @@ console.log('\n── a reconciliation exception outranks every media action ─
   const f = {
     ...base,
     attribution: {
+      // COHERENT ON PURPOSE. gap / total_gmv must equal reconciliation_pct, and
+      // the status must be what the database would return for that percentage.
+      // It did not before — 72.93 against 100,000 is 0.07%, declared as 2.4% —
+      // because only the status was ever read. The percentage is load-bearing
+      // now (see DECISION_RECON_TOLERANCE), so it has to be true.
       ...base.attribution, reconciliation_status: 'exception',
-      reconciliation_gap: 72.93, reconciliation_pct: 0.024, affiliate_capture: 1.039,
-      affiliate_overflow_gmv: 72.93,
+      reconciliation_gap: 14000, reconciliation_pct: 0.14, affiliate_capture: 1.039,
+      affiliate_overflow_gmv: 14000,
     },
   };
   const d = decide(f);
@@ -221,7 +229,7 @@ console.log('\n── a data finding names what actually fired ──');
     ...base,
     attribution: {
       ...base.attribution, reconciliation_status: 'exception',
-      reconciliation_pct: 0.024, reconciliation_gap: 72.93, affiliate_capture: 1.039,
+      reconciliation_pct: 0.14, reconciliation_gap: 14000, affiliate_capture: 1.039,
     },
   };
   const f2 = decide(mismatch).all.find((r) => r.action_code === ACTION.FIX_DATA);
@@ -344,11 +352,14 @@ console.log('\n── a missing day is caught even when the totals agree ──'
   // affiliate_capture 0.99 — the two sources agree almost exactly — while the
   // affiliate feed is a day short of the report. The old guardrail was called
   // "affiliate evidence complete" and passed on exactly this.
-  // A reconciliation exception so the data candidate fires and its `capture`
-  // check actually runs — capture is only evaluated where a data action exists.
+  // A reconciliation gap the ENGINE will not tolerate, so the data candidate
+  // fires and its `capture` check actually runs — capture is only evaluated
+  // where a data action exists. 5% is deliberately a case the screens call
+  // 'rounding': the two thresholds are separate, and this fixture proves the
+  // engine still acts inside the band the screens have gone quiet in.
   const shortDay = {
     ...base,
-    attribution: { ...base.attribution, reconciliation_status: 'exception', reconciliation_pct: 0.03 },
+    attribution: { ...base.attribution, reconciliation_status: 'rounding', reconciliation_pct: 0.05, reconciliation_gap: 5000 },
     sourceHealth: [
       { source: 'affiliate', missing_days: 1, coverage_end: '2026-09-05', state: 'incomplete' },
       { source: 'gmv_max', missing_days: 0, coverage_end: '2026-09-06', state: 'complete' },
@@ -415,6 +426,76 @@ console.log('\n── capability has three states, and one of them needs a human
   check('unavailable is a state', CAPABILITY.UNAVAILABLE, 'unavailable');
   check('supported is a state', CAPABILITY.SUPPORTED, 'supported');
   check('they are three distinct values', new Set(Object.values(CAPABILITY)).size, 3);
+}
+
+
+// ── the screens and the engine judge the same gap by different rules ────────
+//
+// The reporting threshold moved to 10% so a ~1% provider disagreement would
+// stop painting every page red. It was ONE database function with two
+// consumers, so that also made the engine willing to size a budget on top of a
+// 9% disagreement — a change to spending behaviour nobody asked for and that no
+// screen would have shown. These tests pin the two apart.
+console.log('\n── reconciliation: reporting threshold vs decision threshold ──');
+{
+  const at = (statusFromDb, p) => features({
+    ...base,
+    attribution: {
+      ...base.attribution,
+      reconciliation_status: statusFromDb,
+      reconciliation_pct: p,
+      reconciliation_gap: p == null ? null : p * 100000,
+    },
+  });
+
+  check('the decision threshold is 3%', DECISION_RECON_TOLERANCE, 0.03);
+
+  // The real case. Biostime sits near 1%; the database now calls that
+  // 'rounding' and so does the engine. This is the outcome the owner asked for.
+  check('a 1% gap is tolerated by the engine', at('rounding', 0.01).reconExceedsDecision, false);
+
+  // The band the split exists for. The screens stay quiet, the engine does not.
+  check('a 5% gap is quiet on screen but NOT to the engine', at('rounding', 0.05).reconExceedsDecision, true);
+  check('a 9% gap is still quiet on screen but NOT to the engine', at('rounding', 0.09).reconExceedsDecision, true);
+
+  // Above the reporting threshold both agree, as they always did.
+  check('a 14% gap exceeds both', at('exception', 0.14).reconExceedsDecision, true);
+
+  // Direction must not matter: components UNDER the source total is the same
+  // failure as components over it.
+  check('a -5% gap counts too', at('rounding', -0.05).reconExceedsDecision, true);
+
+  // The absolute rounding tolerance still wins. A sub-dollar gap on a tiny
+  // window can be a large percentage and is still not a data problem.
+  check('an exactly-reconciled window is never a decision problem',
+    at('reconciled', 0.4).reconExceedsDecision, false);
+  check('a null percentage is not a failure', at('rounding', null).reconExceedsDecision, false);
+
+  // And the guardrail that consumes it must follow.
+  const gapped = decide({
+    ...base,
+    attribution: { ...base.attribution, reconciliation_status: 'rounding', reconciliation_pct: 0.05, reconciliation_gap: 5000 },
+  });
+  const reconChk = gapped.primary?.guardrails?.find((c) => c.name === 'revenue reconciles');
+  check('"revenue reconciles" fails at 5% even though the screens call it rounding',
+    reconChk ? reconChk.passed : 'the check did not run', false);
+
+  const clean = decide({
+    ...base,
+    attribution: { ...base.attribution, reconciliation_status: 'rounding', reconciliation_pct: 0.01, reconciliation_gap: 1000 },
+  });
+  // At 1% no data action fires at all, so the guardrail is never RUN — which is
+  // the whole point of the change. Asserting "it passed" would have been the
+  // wrong assertion; what matters is that nothing anywhere reports the revenue
+  // as failing to reconcile.
+  const cleanFails = clean.all
+    .flatMap((r) => r.guardrails || [])
+    .some((g) => g.name === 'revenue reconciles' && !g.passed);
+  check('nothing reports a reconciliation failure at 1%', cleanFails, false);
+  check('and no data action is raised at all at 1%',
+    clean.all.some((r) => r.action_code === ACTION.FIX_DATA), false);
+  check('so a 1% gap no longer makes fixing data the primary action',
+    clean.primary?.action === ACTION.FIX_DATA, false);
 }
 
 

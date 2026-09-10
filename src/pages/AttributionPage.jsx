@@ -34,6 +34,7 @@ import {
   Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, SourceTag, Hint,
 } from '../components/ui.jsx';
 import { COPY } from '../lib/copy.js';
+import { DECISION_RECON_TOLERANCE } from '../lib/decide.js';
 
 /**
  * ONE definition of a channel: where its amount comes from, what colour stands
@@ -627,7 +628,12 @@ function Reconciliation({ a, recon, reconLoading, daily, dailyLoading, cur }) {
           <dt>Difference</dt>
           <dd>
             <strong>{gap == null ? '—' : `${gap > 0 ? '+' : ''}${moneyExact(gap, cur)}`}</strong>{' '}
-            <span className="muted">· {pct(a.reconciliation_pct, 2)} of total, against a 0.5% tolerance</span>
+            {/* The number here was hardcoded to "a 0.5% tolerance" and went stale
+                the moment the reporting threshold moved to 10%, so the page was
+                naming a rule it was no longer being judged by. Both thresholds
+                are stated, because they are genuinely different questions. */}
+            <span className="muted">· {pct(a.reconciliation_pct, 2)} of total — flagged on screen above 10%,
+              and held back from budget advice above {pct(DECISION_RECON_TOLERANCE, 0)}</span>
           </dd>
 
           <dt>
