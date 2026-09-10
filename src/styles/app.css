@@ -175,6 +175,32 @@ a:hover { text-decoration: underline; }
 textarea.input { height: auto; padding: var(--s2) var(--s3); line-height: 20px; }
 label.field { display: flex; flex-direction: column; gap: var(--s1); font-size: 12px; color: var(--text-2); }
 
+/* ── forms that record what a person did ────────────────────────────────── */
+/* Two columns at a comfortable width, one when there is not room. min-width:0
+   on the children because a flex/grid item defaults to min-width:auto, and an
+   input inside one will then refuse to shrink and push the drawer sideways. */
+.formgrid {
+  display: grid; gap: var(--s3);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.formgrid > * { min-width: 0; }
+.field-wide { grid-column: 1 / -1; }
+
+/* A group of radios is a fieldset, not a label — a screen reader needs the
+   legend to announce what the options belong to. Reset the browser's default
+   border and padding so it sits like every other field. */
+fieldset.field {
+  display: flex; flex-direction: column; gap: var(--s2);
+  border: 1px solid var(--divider); border-radius: var(--r-control);
+  padding: var(--s3); margin: 0; min-width: 0;
+}
+fieldset.field > legend {
+  font-size: 12px; color: var(--text-2); padding: 0 var(--s2);
+  display: flex; align-items: center; gap: 4px;
+}
+fieldset.field label { font-size: 13px; color: var(--text-1); cursor: pointer; }
+fieldset.field input[type="radio"] { accent-color: var(--accent); flex: 0 0 auto; }
+
 /* ── panels ─────────────────────────────────────────────────────────────── */
 /* No resting shadow anywhere. A border is enough to say "this is a region". */
 .panel {

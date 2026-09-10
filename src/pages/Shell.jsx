@@ -14,6 +14,7 @@ import { Outlet, NavLink, useNavigate, useSearchParams, useLocation } from 'reac
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase.js';
 import { shopSummary, syncRuns, shopReconciliation, shopPaidRoas, shopSourceHealth, money } from '../lib/api.js';
+import { operatorQueue } from '../lib/loopApi.js';
 import { useScope, RANGES, scopedTo } from '../lib/scope.js';
 import { Skeleton, Notice, EmptyState, Boundary } from '../components/ui.jsx';
 
@@ -25,6 +26,7 @@ const I = {
   organic: 'M12 21c5-3 8-7 8-12a8 8 0 0 0-16 0c0 5 3 9 8 12zM12 3v18',
   attribution: 'M21 21H3V3M7 15l4-5 3 3 5-7',
   outreach: 'M4 5h16v12H8l-4 4z',
+  decisions: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
   data: 'M12 3c4 0 8 1 8 3v12c0 2-4 3-8 3s-8-1-8-3V6c0-2 4-3 8-3zM4 10c0 2 4 3 8 3s8-1 8-3',
 };
 
@@ -101,6 +103,11 @@ export default function Shell({ session, profile }) {
         <div className="navgroup">More</div>
         {secondary.map(link)}
         <div className="sidebar-foot">
+          {/* The loop needs a way back into it. Without a standing indicator, a
+              review that came due last Tuesday is only found by someone who
+              thinks to go looking, which is the same as not having it. */}
+          <DecisionLogLink shop={shop}
+            onOpen={() => { setNavOpen(false); navigate(scopedTo('/decisions', params)); }} />
           <DataStatusLink shop={shop} scope={scope}
             onOpen={() => { setNavOpen(false); navigate(scopedTo('/data', params)); }} />
         </div>
@@ -192,6 +199,43 @@ function AccountMenu({ profile, session }) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The way back into the operating loop.
+ *
+ * A decision only pays for itself when somebody reads the result, and a review
+ * that came due last Tuesday is found by nobody unless something says so. The
+ * count is what is genuinely ACTIONABLE — reviews whose data has settled, plus
+ * deferrals whose date has arrived. Reviews still waiting on data are
+ * deliberately excluded: they are not work yet, and counting them would train
+ * the operator to ignore the number.
+ */
+function DecisionLogLink({ shop, onOpen }) {
+  const queueQ = useQuery({
+    queryKey: ['opqueue', shop?.id],
+    queryFn: () => operatorQueue(shop.id),
+    enabled: !!shop?.id,
+  });
+
+  if (!shop) return null;
+  const q = queueQ.data;
+  const actionable = Number(q?.reviews_due || 0) + Number(q?.deferred_ready || 0);
+  const undecided = Number(q?.undecided || 0);
+
+  return (
+    <button className="navlink" onClick={onOpen}
+      style={{ width: '100%', background: 'none', border: 0, textAlign: 'left' }}
+      title={actionable
+        ? `${actionable} waiting on you`
+        : undecided ? `${undecided} undecided recommendation${undecided === 1 ? '' : 's'}` : 'Decision log'}>
+      <Icon d={I.decisions} />
+      <span className="navlabel" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span className="truncate">Decision log</span>
+        {actionable > 0 && <span className="status status-warn" style={{ padding: '0 6px', fontSize: 11 }}>{actionable}</span>}
+      </span>
+    </button>
   );
 }
 

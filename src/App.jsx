@@ -12,6 +12,7 @@ import ProductDetailPage from './pages/ProductDetailPage.jsx';
 import OrganicPage from './pages/OrganicPage.jsx';
 import AttributionPage from './pages/AttributionPage.jsx';
 import DataStatusPage from './pages/DataStatusPage.jsx';
+import DecisionLogPage from './pages/DecisionLogPage.jsx';
 import OutreachPage from './pages/OutreachPage.jsx';
 
 export default function App() {
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="organic" element={<OrganicPage />} />
           <Route path="attribution" element={<AttributionPage />} />
           <Route path="data" element={<DataStatusPage />} />
+          <Route path="decisions" element={<DecisionLogPage />} />
           {profile?.role === 'boss' && <Route path="outreach" element={<OutreachPage />} />}
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
