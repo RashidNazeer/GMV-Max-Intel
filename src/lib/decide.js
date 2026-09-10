@@ -354,6 +354,10 @@ export function features(f = {}) {
     // any window our snapshots do not cover, and it stays `unknown` — never
     // extrapolated backwards from today.
     campaignWindowStates: Array.isArray(f.campaignWindowStates) ? f.campaignWindowStates : null,
+    // Target ROI headroom, keyed by direction, from roi_headroom (migration
+    // 034). Absent until an episode exists, which is the normal state — and
+    // the reason no action here may size a step from a default band.
+    roiHeadroom: f.roiHeadroom || null,
     // The diagnostic window is anchored to the CUTOFF and no longer follows the
     // report length. Both are carried so a recommendation can state which
     // window its evidence came from.
@@ -936,24 +940,50 @@ const cTargetRoi = (x) => {
   const throttled = x.utilisation < 0.7 && x.marginal != null && x.marginal >= 1;
   if (!throttled) return null;
 
-  const band = sizeBand(BANDS.target_roi, x);
+  // ── THE SIZE COMES FROM EVIDENCE, OR IT DOES NOT COME AT ALL ─────────────
+  //
+  // This used to say "Lower Target ROI by 10%" and set suggestedValue to
+  // targetRoi × 0.9, from sizeBand(BANDS.target_roi) — a default ladder applied
+  // to every campaign on every shop. Nothing in that number came from this
+  // campaign, because no history of this campaign was ever consulted. On screen
+  // it reads as a considered figure, and it is not one.
+  //
+  // The OBSERVATION is sound and stays: spend well under the cap while the
+  // marginal return is still above one means the bid is the limit, not the
+  // budget. What does not follow is how far to move it. That depends on how
+  // this campaign has responded to Target ROI changes before, and until an
+  // episode exists (see roi_headroom, migration 034) the honest answer is that
+  // the operator chooses the size and the tool says what to watch.
+  const hr = x.roiHeadroom?.looser || null;
+  const evidenced = hr?.status === 'eligible_for_review' && hr?.candidate != null;
+
   return {
     action: ACTION.DECREASE_TARGET_ROI,
     usesSpend: true,
     severity: 'info',
     title: 'Target ROI is throttling delivery',
-    shortFinding: (x) => `Spend is ${pct(x.utilisation)} of budget while the marginal return is still ${x.marginal?.toFixed(2)}`,
+    shortFinding: (y) => `Spend is ${pct(y.utilisation)} of budget while the marginal return is still ${y.marginal?.toFixed(2)}`,
     reason: `Spend is only ${pct(x.utilisation)} of the daily budget while the marginal return is still ${x.marginal.toFixed(2)}. The budget is not the limit — the bid is.`,
-    actionText: `Lower Target ROI by ${pct(band)} for ${testDays(x)} days. Watch delivered spend and marginal return together; if spend rises and marginal falls below one, reverse it.`,
+    actionText: evidenced
+      ? `Lower Target ROI toward ${hr.candidate.toFixed(2)} for ${testDays(x)} days — a level this campaign has actually run at, from ${hr.episodes_eligible} recorded changes. Watch delivered spend and marginal return together; if spend rises and marginal falls below one, reverse it.`
+      : `Lower Target ROI for ${testDays(x)} days and watch delivered spend and marginal return together; if spend rises and marginal falls below one, reverse it. ${hr?.supported_note || 'No Target ROI change has been observed on this campaign yet, so there is nothing to size a step from.'} Choose the step yourself and record it, and the next one can be sized from what this campaign actually did.`,
     evidence: [
       `utilisation ${pct(x.utilisation)}`,
       `Target ROI ${x.targetRoi.toFixed(2)}`,
       `marginal ${x.marginal.toFixed(2)}`,
+      evidenced
+        ? `${hr.episodes_eligible} usable Target ROI changes on record, between ${hr.observed_min} and ${hr.observed_max}`
+        : 'no usable Target ROI change on record for this campaign',
     ],
     checks: run(x, ['spend', 'notSimulated', 'marginal', 'creativeSupply', 'datesComplete', 'cooldown']),
     currentValue: x.targetRoi,
-    suggestedValue: x.targetRoi * (1 - band),
-    changePct: -band,
+    // NULL, deliberately, when nothing supports a figure. A suggested value is
+    // rendered as a proposal and stored on the recommendation record; inventing
+    // one here would put a fabricated number into the decision history.
+    suggestedValue: evidenced ? hr.candidate : null,
+    changePct: evidenced && x.targetRoi ? (hr.candidate / x.targetRoi) - 1 : null,
+    // Says out loud where the number came from, or that there is none.
+    candidateBasis: evidenced ? 'observed_episodes' : 'operator_must_choose',
     valueUnit: 'roi',
     testDays: testDays(x),
     revenueAffected: x.spend,
@@ -961,6 +991,7 @@ const cTargetRoi = (x) => {
     confidenceParts: [
       { name: 'model confidence', value: x.modelConfidence ?? 0.3 },
       { name: 'utilisation evidence', value: 1 },
+      { name: 'setting-response evidence', value: evidenced ? 0.7 : 0 },
     ],
   };
 };
@@ -1190,6 +1221,11 @@ function shape(c, x, role, suppressedList) {
     change_abs: c.changeAbs ?? null,
     change_pct: c.changePct ?? null,
     value_unit: c.valueUnit ?? null,
+    // WHERE THE SUGGESTED VALUE CAME FROM, or that there isn't one and why.
+    // Carried on the record rather than only in the prose, so a stored
+    // recommendation can still be told apart from one whose number was
+    // fabricated by a default band. null on actions that do not propose a value.
+    candidate_basis: c.candidateBasis ?? null,
     // What this action ACTS ON, what it can be expected to move, and what it
     // must not be read as promising. Carried on every recommendation so the
     // drawer, the scenario table and a stored record all say the same thing.

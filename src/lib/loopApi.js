@@ -249,3 +249,34 @@ export async function reviewEvents(reviewId) {
   if (error) throw new Error(error.message);
   return data || [];
 }
+
+/* ── Target ROI headroom ──────────────────────────────────────────────────── */
+
+export const ROI_STATUS_LABEL = {
+  insufficient_history: 'No history to reason from',
+  confounded_evidence: 'Evidence is confounded',
+  single_episode: 'One case only',
+  eligible_for_review: 'Eligible for review',
+};
+
+/**
+ * Headroom per campaign, in BOTH directions.
+ *
+ * Returns a STATUS first and a number only when episodes support one. The
+ * shape is deliberately awkward to misuse: there is no field that means
+ * "suggested change" unless the evidence for it exists.
+ */
+export async function roiHeadroom(shopId) {
+  const rows = await rpc('roi_headroom', { p_shop_id: shopId });
+  // Keyed by campaign then direction, because every consumer wants one
+  // campaign at a time and re-grouping a flat list at each call site is how
+  // two screens end up disagreeing about which direction they are showing.
+  const by = {};
+  for (const r of rows || []) {
+    by[r.campaign_id] = by[r.campaign_id] || { campaign_id: r.campaign_id, campaign_name: r.campaign_name };
+    by[r.campaign_id][r.direction] = r;
+  }
+  return by;
+}
+
+export const roiEpisodes = (shopId) => rpc('roi_episodes', { p_shop_id: shopId });

@@ -659,5 +659,67 @@ console.log('\n── affiliate capture is named for its criterion, not as agree
 }
 
 
+// ── a Target ROI step must be sized by evidence, or not at all ────────────
+//
+// The candidate used to come from sizeBand(BANDS.target_roi) — a 5/10/15%
+// ladder applied to every campaign on every shop, with nothing in it drawn from
+// the campaign it was shown against. Section 12: "Do not output a hidden
+// default recommendation such as a universal 10% ROI change."
+console.log('\n── Target ROI: no hidden default ──');
+{
+  // Spend at 30% of a 1000 budget with marginal 1.6 — the bid is the limit.
+  const throttled = {
+    ...base,
+    dailyBudget: 1000,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+  };
+
+  const bare = decide(throttled).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+  check('the finding still fires — the observation is sound', !!bare, true);
+  check('but it proposes NO value without evidence', bare.suggested_value, null);
+  check('and no percentage change', bare.change_pct, null);
+  check('it says the size is the operator’s to choose',
+    /Choose the step yourself/.test(bare.action_text), true);
+  check('and says why it cannot size one',
+    /nothing to size a step from|no usable Target ROI change/i.test(
+      bare.action_text + bare.evidence.join(' ')), true);
+  // The old default must not reappear by any route.
+  check('it does not name a 10% step', /\b10%\b/.test(bare.action_text), false);
+  check('the basis is recorded as needing the operator',
+    bare.candidate_basis, 'operator_must_choose');
+
+  // WITH episodes, a candidate is allowed — and comes from what the campaign
+  // has actually run at, not from a ladder.
+  const evidenced = decide({
+    ...throttled,
+    roiHeadroom: {
+      looser: {
+        status: 'eligible_for_review', candidate: 1.25,
+        episodes_eligible: 3, observed_min: 1.2, observed_max: 1.4,
+      },
+    },
+  }).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+
+  check('with episodes it proposes a value', evidenced.suggested_value, 1.25);
+  check('the value is a setting the campaign has run at',
+    evidenced.suggested_value >= 1.2 && evidenced.suggested_value <= 1.4, true);
+  check('and it says how many changes support it',
+    /3 recorded changes/.test(evidenced.action_text), true);
+  check('the basis names the evidence', evidenced.candidate_basis, 'observed_episodes');
+  check('confidence includes setting-response evidence',
+    evidenced.confidence_parts.some((p) => /setting-response/.test(p.name)), true);
+
+  // A status short of eligible must NOT unlock a candidate.
+  for (const status of ['insufficient_history', 'confounded_evidence', 'single_episode']) {
+    const weak = decide({
+      ...throttled,
+      roiHeadroom: { looser: { status, candidate: 1.25, episodes_eligible: 1 } },
+    }).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+    check(`${status} proposes no value even when a candidate is present`,
+      weak.suggested_value, null);
+  }
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -13,6 +13,7 @@
 // job; repeating it here made a second copy of the same finding on a second
 // screen. The header carries ONE action, which opens the same evidence drawer.
 import { isActiveStatus } from '../lib/campaignStatus.js';
+import RoiHeadroom from '../components/RoiHeadroom.jsx';
 import { useState } from 'react';
 import { useParams, useOutletContext, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -40,6 +41,7 @@ import { actionLabel } from '../lib/decide.js';
 const TABS = [
   { id: 'performance', label: 'Performance' },
   { id: 'scenario', label: 'Scenario' },
+  { id: 'headroom', label: 'Target ROI' },
   { id: 'evidence', label: 'Evidence' },
   { id: 'history', label: 'History' },
 ];
@@ -238,6 +240,14 @@ export default function CampaignDetailPage() {
         <Boundary name={TABS.find((t) => t.id === tab)?.label} resetKey={`${tab}:${scope.start}:${scope.end}`}>
           {tab === 'performance' && <Performance facts={facts} cur={cur} scope={scope} />}
           {tab === 'scenario' && <Scenario facts={facts} cur={cur} scope={scope} decision={decision} onOpenDecision={() => setDrawer(true)} />}
+          {/* Both directions of Target ROI headroom, in the existing tab
+              structure rather than as a new page — the requirement asks for
+              it 'within campaign analysis', and a fifth top-level route for
+              one capability is the dashboard sprawl this is meant to avoid. */}
+          {tab === 'headroom' && (
+            <RoiHeadroom shop={shop} campaignId={campaignId}
+              currentRoi={campaign.target_roas} campaignName={campaign.campaign_name} />
+          )}
           {tab === 'evidence' && <EvidenceTab decision={decision} facts={facts} />}
           {tab === 'history' && <History shop={shop} recs={recsQ.data} recsLoading={recsQ.isLoading} />}
         </Boundary>

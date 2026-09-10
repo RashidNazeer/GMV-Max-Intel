@@ -22,6 +22,7 @@ import {
 import { fitSpendResponse, recoveryFor, TARGET } from './marginal.js';
 import { decide } from './decide.js';
 import { budgetAvailability } from './budget.js';
+import { roiHeadroom } from './loopApi.js';
 
 export function useFacts(shop, scope) {
   const id = shop?.id;
@@ -41,6 +42,14 @@ export function useFacts(shop, scope) {
   // What each campaign was DOING during the reported days. listCampaigns holds
   // current state only, so without this a creative diagnosis cannot tell a
   // fading asset from one that simply stopped being delivered.
+  // Setting-response evidence, so a Target ROI action can size a step from
+  // what this campaign has actually done instead of from a default band.
+  const headroomQ = useQuery({
+    queryKey: ['roihead', id],
+    queryFn: () => roiHeadroom(id),
+    enabled: on,
+  });
+
   const windowStateQ = useQuery({
     queryKey: ['campwindow', id, scope.start, scope.end],
     queryFn: () => campaignStateInWindow(id, scope.start, scope.end),
@@ -156,6 +165,7 @@ export function useFacts(shop, scope) {
     roas: roasQ.data,
     campaigns,
     campaignWindowStates: windowStateQ.data ?? null,
+    roiHeadroomByCampaign: headroomQ.data ?? null,
     dailyBudget,
     // Structured budget availability. `dailyBudget` above is kept as-is (it is
     // the ACTIVE budget and several callers depend on that meaning); this says

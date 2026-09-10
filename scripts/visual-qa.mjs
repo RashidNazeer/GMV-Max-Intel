@@ -473,9 +473,31 @@ if (await prodLink.count()) {
 // ── campaign detail + the workflow that must survive a reload ───────────────
 console.log('\n── campaign detail and the persistent workflow ──');
 await page.goto(`${BASE}/campaigns`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(4000);
+
+// ── A SKIP MUST BE A FACT, NOT A TIMEOUT ─────────────────────────────────
+// This slept 4000ms and then counted. When the table had not rendered yet the
+// count was 0, the entire campaign-detail section was skipped, and the run
+// printed "no campaigns on this shop" — on a shop with four campaigns. Every
+// check inside was reported as neither passed nor failed, which is the one
+// outcome a gate must never produce quietly.
+//
+// Now: poll for the row, and when it genuinely does not arrive, look at what
+// the page actually says. An empty state is a fact worth skipping on; anything
+// else is a FAILURE, because the section could not run for a reason we do not
+// understand.
 const campLink = page.locator(SEL.rowLink).first();
-if (await campLink.count()) {
+let campReady = false;
+for (let i = 0; i < 40 && !campReady; i += 1) {
+  campReady = (await campLink.count()) > 0;
+  if (!campReady) await page.waitForTimeout(500);
+}
+if (!campReady) {
+  const shown = await page.evaluate(() => document.body.innerText);
+  const genuinelyEmpty = /no GMV Max campaigns|no campaigns|ad account is not connected/i.test(shown);
+  check('the campaigns table rendered, or explained why it is empty',
+    genuinelyEmpty, shown.slice(0, 140).replace(/\s+/g, ' '));
+}
+if (campReady) {
   await campLink.click();
   await waitForData(page);   // was a fixed sleep: see the note at waitForData
   check('a campaign name opens campaign detail', /\/campaigns\/.+/.test(page.url()), page.url());
@@ -490,11 +512,35 @@ if (await campLink.count()) {
     !/If daily budget/i.test(scenario));
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-scenario.png') });
 
+  // ── Target ROI headroom: both directions, and no invented number ─────────
+  // The candidate used to be a fixed 5/10/15% ladder applied to every campaign
+  // on every shop, with nothing in it drawn from the campaign it was shown
+  // against. Asserted on the rendered page, because that is where an operator
+  // would read a fabricated figure as a considered one.
+  await page.locator(SEL.tab('Target ROI')).click();
+  await page.waitForTimeout(2500);
+  const headroom = await page.evaluate(() => document.body.innerText);
+  check('both directions are offered, not just the one we have evidence for',
+    /Raise Target ROI/.test(headroom) && /Lower Target ROI/.test(headroom));
+  check('a direction without evidence says so rather than showing a number',
+    /No history to reason from|evidence does not support one/i.test(headroom));
+  check('and it is not a dead end — a test can still be planned',
+    /Plan a test yourself|Plan this test/.test(headroom));
+  check('it states that a Target ROI is a bid, not a promise',
+    /bid, not a promise/i.test(headroom));
+  // The specific number the old default produced. If a band ever creeps back
+  // in, this is where it shows up first.
+  check('no default step is proposed anywhere on the panel',
+    !/by 10%|by 15%|by 5%/.test(headroom), headroom.slice(0, 0));
+  await page.screenshot({ path: path.join(OUT, 'journey--campaign-headroom.png') });
+
   await page.locator(SEL.tab('Evidence')).click();
   await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(OUT, 'journey--campaign-evidence.png') });
 } else {
-  console.log('  (no campaigns on this shop — skipped)');
+  // Reached only when the check above confirmed the page genuinely says the
+  // shop has none. The old message asserted that as fact whatever the cause.
+  console.log('  (the page reports no campaigns for this shop — detail checks not applicable)');
 }
 
 // Mark planned, reload, confirm it stuck — then put it back.
