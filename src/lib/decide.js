@@ -419,6 +419,69 @@ const CHECKS = {
 
 const run = (x, names) => names.map((k) => ({ key: k, ...CHECKS[k](x) }));
 
+/**
+ * Every check that EXISTS, so a stored recommendation can say which ones it
+ * did not consult.
+ *
+ * Each candidate runs only the checks relevant to its own action — a creative
+ * review does not need spend data, and gating it on spend would be the
+ * action-specific-checks rule broken in the other direction. But a row that
+ * records only what it ran cannot be told apart from a row where everything
+ * passed. Absence of a check is not a pass, and the record now says which is
+ * which.
+ */
+const CHECK_KEYS = Object.keys(CHECKS);
+
+/**
+ * WHAT WOULD COUNT AS THE TEST WORKING, and when to stop.
+ *
+ * Migration 023 added success_criterion and review_min_days and nothing filled
+ * them, so recommendation_outcome() computed a change with nothing to judge it
+ * against — a number with no threshold is not a result. These come from the
+ * MECHANISM: the criterion has to be about the thing the lever actually moves,
+ * which is why a Target ROI test is judged on delivery and efficiency rather
+ * than on the setting landing where it was set.
+ */
+const REVIEW = {
+  [ACTION.INCREASE_BUDGET]: {
+    success: 'delivered spend rises toward the new cap AND total shop GMV rises with it',
+    stop: 'delivered spend does not move within the hold period — the cap was not the limit',
+    minDays: 7,
+  },
+  [ACTION.DECREASE_BUDGET]: {
+    success: 'spend falls as intended without a disproportionate fall in shop GMV',
+    stop: 'shop GMV falls faster than spend',
+    minDays: 7,
+  },
+  [ACTION.DECREASE_TARGET_ROI]: {
+    // TikTok's own Product GMV Max guidance: hold an ROI change at least three
+    // full days before adjusting again. Checked 2026-09-09. Used as a documented
+    // minimum, not as proof of what this account supports.
+    success: 'delivery increases and total shop GMV rises; realised return stays above the floor',
+    stop: 'spend rises while proven return falls below the floor — reverse it',
+    minDays: 7,
+    holdDays: 3,
+    holdWhy: "TikTok's Product GMV Max guidance asks for at least three full days on an ROI setting before changing it again",
+  },
+  [ACTION.INCREASE_TARGET_ROI]: {
+    success: 'efficiency improves without losing more GMV than the spend saved',
+    stop: 'delivery collapses — the bid is now too conservative to compete',
+    minDays: 7,
+    holdDays: 3,
+    holdWhy: "TikTok's Product GMV Max guidance asks for at least three full days on an ROI setting before changing it again",
+  },
+  [ACTION.REVIEW_CREATIVE]: {
+    success: 'the declining set stops growing and new videos start earning',
+    stop: 'nothing here is a stopping rule — a review is an inspection, not a test',
+    minDays: 7,
+  },
+  [ACTION.FIX_DATA]: {
+    success: 'the days that disagreed reconcile, or the disagreement is explained by the source',
+    stop: 'not applicable — this changes evidence, not delivery',
+    minDays: 0,
+  },
+};
+
 // ── 3. CANDIDATES ───────────────────────────────────────────────────────────
 // Each returns null when it has nothing to say. Every one that DOES fire is
 // kept, even if it will later lose — the losers become the suppressed list.
@@ -864,6 +927,21 @@ function shape(c, x, role, suppressedList) {
     // must not be read as promising. Carried on every recommendation so the
     // drawer, the scenario table and a stored record all say the same thing.
     mechanism: mechanismFor(c.action),
+
+    // WHICH CHECKS RAN, AND WHICH WERE NEVER CONSULTED.
+    // A row recording only what it ran cannot be told apart from a row where
+    // everything passed. Absence of a check is not a pass.
+    checks_ran: (c.checks || []).map((k) => k.key).filter(Boolean),
+    checks_not_run: CHECK_KEYS.filter((k) => !(c.checks || []).some((r) => r.key === k)),
+
+    // THE REVIEW CONDITION. Stored so a decision can be judged later against
+    // what it was supposed to achieve, rather than against whatever moved.
+    success_criterion: REVIEW[c.action]?.success ?? null,
+    stopping_rule: REVIEW[c.action]?.stop ?? null,
+    review_min_days: REVIEW[c.action]?.minDays ?? null,
+    hold_days: REVIEW[c.action]?.holdDays ?? null,
+    hold_why: REVIEW[c.action]?.holdWhy ?? null,
+
     test_days: c.testDays ?? null,
     revenue_affected: c.revenueAffected ?? null,
     // Three separate claims, kept separate.

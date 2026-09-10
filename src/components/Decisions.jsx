@@ -182,6 +182,27 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
           </section>
         )}
 
+        {/* THE REVIEW CONDITION, before the evidence rather than after it.
+            recommendation_outcome() computed a before-and-after change with
+            nothing to judge it against — a number with no threshold is not a
+            result. Saying what would count as this working, and what would
+            mean stop, has to happen BEFORE the test, or it is chosen
+            afterwards to fit whatever moved. */}
+        {(p.success_criterion || p.hold_days) && (
+          <section>
+            <h3 className="section-title">How you will know</h3>
+            <dl className="dl" style={{ marginTop: 8 }}>
+              {p.success_criterion && (<><dt>Working if</dt><dd>{p.success_criterion}</dd></>)}
+              {p.stopping_rule && (<><dt>Stop if</dt><dd>{p.stopping_rule}</dd></>)}
+              {p.review_min_days > 0 && (
+                <><dt>Review after</dt>
+                  <dd>{p.review_min_days} complete days of data{p.test_days ? ` · test runs ${p.test_days} days` : ''}</dd></>
+              )}
+              {p.hold_days && (<><dt>Hold at least</dt><dd>{p.hold_days} days — {p.hold_why}</dd></>)}
+            </dl>
+          </section>
+        )}
+
         {p.evidence?.length > 0 && (
           <section>
             <h3 className="section-title">Evidence</h3>

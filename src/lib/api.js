@@ -324,6 +324,7 @@ export async function persistRecommendation(shopId, decision, ctx) {
     test_days: decision.test_days,
     review_min_days: decision.review_min_days ?? null,
     success_criterion: decision.success_criterion ?? null,
+    stopping_rule: decision.stopping_rule ?? null,
     confidence: decision.confidence,
     confidence_label: decision.confidence_label,
     confidence_parts: decision.confidence_parts || [],
