@@ -36,6 +36,7 @@ import {
   money, moneyExact, pct, numOrNull,
 } from '../lib/api.js';
 import { momentum, MOMENTUM_VERSION } from '../lib/momentum.js';
+import OrganicBaseline from '../components/OrganicBaseline.jsx';
 import ReportToolbar from '../components/ReportToolbar.jsx';
 import {
   Panel, PageHeader, MetricSummary, Notice, Skeleton, EmptyState, Unavailable,
@@ -187,6 +188,12 @@ export default function OrganicPage() {
       {m.reason && <Notice tone="info">{m.reason}</Notice>}
 
       <MetricSummary items={metrics} source="measured" />
+
+      {/* The baseline this window is judged against, and the method that
+          produced it. The page previously compared against the adjacent
+          period without naming it as a choice — and on this shop the rolling
+          median and the adjacent window disagree by a wide margin. */}
+      <OrganicBaseline shop={shop} scope={scope} />
 
       <Panel title="Organic revenue by day" sub="The measured organic band, day by day.">
         <OrganicChart rows={dailyQ.data} loading={dailyQ.isLoading} error={dailyQ.error} cur={cur} />

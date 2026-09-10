@@ -280,3 +280,37 @@ export async function roiHeadroom(shopId) {
 }
 
 export const roiEpisodes = (shopId) => rpc('roi_episodes', { p_shop_id: shopId });
+
+/* ── organic baselines ────────────────────────────────────────────────────── */
+
+export const BASELINE_METHODS = [
+  ['rolling', 'Rolling median',
+    'The median of several recent comparable windows. Robust to one strange period, slower to notice a real turn.'],
+  ['adjacent', 'Previous period',
+    'The window immediately before this one. Closest in time, and the most exposed to a single odd week.'],
+  ['seasonal', 'Same period last year',
+    'Controls for calendar effects, and needs a year of history to exist.'],
+];
+
+export const BASELINE_STATUS_LABEL = {
+  ok: 'Comparable',
+  no_history: 'No comparable period',
+  zero_baseline: 'Baseline was zero',
+  insufficient_coverage: 'Not enough days collected',
+};
+
+/**
+ * A DESCRIPTIVE organic baseline that names its own method.
+ *
+ * It says what organic revenue did in comparable past periods. It does not say
+ * what organic revenue would have been without the advertising — that is
+ * organicCounterfactual, and it answers honestly.
+ */
+export const organicBaseline = (shopId, start, end, method = 'rolling', lookback = 4) =>
+  rpc('organic_baseline', {
+    p_shop_id: shopId, p_start: start, p_end: end, p_method: method, p_lookback: lookback,
+  }).then((r) => (Array.isArray(r) ? r[0] : r) || null);
+
+export const organicCounterfactual = (shopId, start, end) =>
+  rpc('organic_counterfactual', { p_shop_id: shopId, p_start: start, p_end: end })
+    .then((r) => (Array.isArray(r) ? r[0] : r) || null);

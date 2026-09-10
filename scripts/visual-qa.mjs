@@ -1009,6 +1009,47 @@ check('it no longer claims to count the whole report window',
   !!organicNew && !/first sale inside the window/i.test(organicNew.hint),
   organicNew?.hint?.slice(0, 120));
 
+// ── the organic baseline names its method, and refuses the counterfactual ──
+// The page compared against the adjacent period and never said so. On this shop
+// the rolling median and the adjacent window disagree by a wide margin, so
+// which method produced the number is not a detail.
+{
+  const organic = await page.evaluate(() => document.body.innerText);
+  check('the baseline states which method produced it',
+    /median of the last|window immediately before|same dates last year/i.test(organic));
+  check('the method is a control, not a fixed choice',
+    await page.locator('select[aria-label="Baseline method"]').count() > 0);
+
+  // THE REFUSAL. "What organic would have been without the ads" is a different
+  // question from "what organic did", and only the second is answerable here.
+  check('the counterfactual is asked and openly refused',
+    /not estimable from the available evidence/i.test(organic));
+  check('and it says what would make it estimable',
+    /holdout|zero-spend days/i.test(organic));
+
+  // Switching method must actually change the reference, or the control is
+  // decorative.
+  const before = organic.match(/Baseline[\s\S]{0,60}/)?.[0] || '';
+  await page.selectOption('select[aria-label="Baseline method"]', 'adjacent');
+  let after = before;
+  for (let i = 0; i < 30 && after === before; i += 1) {
+    await page.waitForTimeout(500);
+    const t = await page.evaluate(() => document.body.innerText);
+    after = t.match(/Baseline[\s\S]{0,60}/)?.[0] || '';
+  }
+  check('changing the method changes the baseline it reports', after !== before,
+    `${before.replace(/\s+/g, ' ')} -> ${after.replace(/\s+/g, ' ')}`);
+
+  // Seasonal has no year of history on this shop and must say so rather than
+  // compare against nothing.
+  await page.selectOption('select[aria-label="Baseline method"]', 'seasonal');
+  await page.waitForTimeout(2500);
+  const seasonal = await page.evaluate(() => document.body.innerText);
+  check('a method with no history says so instead of printing a percentage',
+    /No comparable period/i.test(seasonal));
+  await page.screenshot({ path: path.join(OUT, 'journey--organic-baseline.png') });
+}
+
 // ── console health ──────────────────────────────────────────────────────────
 console.log('\n── the browser console ──');
 check('no uncaught exceptions', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
