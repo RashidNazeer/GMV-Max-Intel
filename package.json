@@ -12,6 +12,8 @@
     "verify:live": "node scripts/verify-live.mjs",
     "check:decisions": "node scripts/check-decision-log.mjs",
     "check:retention": "node scripts/check-retention.mjs",
+    "check:tenancy": "node scripts/check-tenancy.mjs",
+    "check:lifecycle": "node scripts/check-lifecycle.mjs",
     "check:loop": "node scripts/loop-e2e.mjs",
     "keycheck": "node scripts/key-check.mjs",
     "audit:bundle": "node scripts/bundle-audit.mjs",

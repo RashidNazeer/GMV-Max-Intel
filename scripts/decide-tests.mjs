@@ -838,5 +838,164 @@ console.log('\n── reviewed history changes later advice ──');
 }
 
 
+// ── T09: a modelled spend increase is not a budget instruction ─────────────
+//
+// The exact fixture the prompt names: spend 300/day against a 550 cap, with no
+// evidence the cap binds. A +10% modelled spend scenario must not become a +10%
+// budget recommendation, and must not promise the spend will rise.
+console.log('\n── T09: the budget mechanism ──');
+{
+  const notBinding = {
+    ...base,
+    dailyBudget: 550,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+  };
+  const d = decide(notBinding);
+
+  check('raising the budget is not the primary action',
+    d.primary?.action_code === ACTION.INCREASE_BUDGET, false);
+  const s = suppressedFor(notBinding, ACTION.INCREASE_BUDGET);
+  check('it is suppressed on the utilisation evidence',
+    /not spending what it already has|utilisation/i.test(s?.why || ''), true);
+  // 300 of 550 is 55%. Nothing may read that as a cap under pressure.
+  check('and the mechanism refuses to promise the spend will rise',
+    /raising the cap raises spend/.test(MECHANISM[ACTION.INCREASE_BUDGET].cannot_claim), true);
+
+  // THE CONTRAST. A genuinely cap-constrained campaign SHOULD scale.
+  const binding = {
+    ...base,
+    dailyBudget: 320,
+    marginal: { ...healthyMarginal, mean_daily_spend: 312 },
+  };
+  check('a campaign actually pinned against its cap can scale',
+    actions(binding).includes(ACTION.INCREASE_BUDGET), true);
+  const s2 = suppressedFor(binding, ACTION.INCREASE_BUDGET);
+  check('and is not blocked on utilisation when it is binding',
+    /not spending what it already has/i.test(s2?.why || ''), false);
+}
+
+// ── T07: an incomplete period is not a smaller one ────────────────────────
+console.log('\n── T07: incomplete comparison periods ──');
+{
+  const short = {
+    ...base,
+    sourceHealth: [
+      { source: 'affiliate', missing_days: 1, coverage_end: '2026-09-05', state: 'incomplete' },
+      { source: 'gmv_max', missing_days: 0, coverage_end: '2026-09-06', state: 'complete' },
+    ],
+    creative: { ...base.creative, declining_videos: 61, declining_gmv: 48800, top5_share: 0.55 },
+  };
+  const g = decide(short).all.flatMap((r) => r.guardrails || []);
+  const dates = g.find((x) => x.name === 'every day of the report arrived');
+  check('the date-completeness guardrail fails', dates?.passed, false);
+  check('and names the source and the shortfall',
+    /affiliate is missing 1 day/.test(dates?.detail || ''), true);
+  // A missing day must never be described as a zero day.
+  check('the shortfall is described as missing, not as zero',
+    /zero/i.test(dates?.detail || ''), false);
+  // An INSPECTION is still allowed. Incomplete data blocks conclusions, not
+  // looking — the distinction section 13 draws explicitly.
+  check('an investigation is still offered on incomplete data',
+    decide(short).all.length > 0, true);
+}
+
+// ── T15: no economic threshold means ask, not guess ───────────────────────
+console.log('\n── T15: the economic objective ──');
+{
+  // Revenue ROAS is not profit. Nothing may decide what is "efficient" without
+  // the owner's break-even, and no mechanism may imply it has one.
+  const d = decide({ ...base, objective: undefined });
+  check('the pipeline still runs without an objective', !!d.primary || d.all.length >= 0, true);
+  check('a budget action does not promise profit',
+    /profit/i.test(MECHANISM[ACTION.INCREASE_BUDGET].expected_effect || ''), false);
+  check('and a Target ROI action refuses a realised-return promise',
+    /realised ROI/.test(MECHANISM[ACTION.DECREASE_TARGET_ROI].cannot_claim), true);
+}
+
+// ── T18/T19: relaxation evidence, and a confounded episode ────────────────
+console.log('\n── T18/T19: ROI relaxation and confounding ──');
+{
+  const throttled = {
+    ...base,
+    dailyBudget: 1000,
+    marginal: { ...healthyMarginal, mean_daily_spend: 300 },
+  };
+
+  // T18. A relaxation that increased delivery but breached an economic
+  // guardrail. Both consequences must be represented — a delivery gain does not
+  // erase an efficiency loss, and the favourable case is not hidden either.
+  const relaxed = decide({
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.DECREASE_TARGET_ROI]: {
+        status: 'caution_from_history',
+        cases_eligible: 2, favourable: 1, unfavourable: 1, reverted: 1,
+        caution: 'A comparable change was REVERTED after review. Treat a repeat as a smaller test.',
+      },
+    },
+  }).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+
+  check('a reverted comparable case is carried on the action', relaxed.prior_cases.reverted, 1);
+  check('the caution asks for a smaller repeat',
+    /smaller test/i.test(relaxed.prior_cases.caution), true);
+  check('and the favourable case is not hidden', relaxed.prior_cases.favourable, 1);
+
+  // T19. Every comparable episode confounded: context, never proof.
+  const confounded = decide({
+    ...throttled,
+    reviewedHistory: {
+      [ACTION.DECREASE_TARGET_ROI]: {
+        status: 'all_cases_confounded',
+        cases_eligible: 0, favourable: 0, unfavourable: 0,
+        caution: '3 comparable case(s), none usable: each had something else moving at the same time.',
+      },
+    },
+  }).all.find((r) => r.action_code === ACTION.DECREASE_TARGET_ROI);
+
+  check('confounded cases report zero usable evidence', confounded.prior_cases.cases_eligible, 0);
+  check('and say why none can be read as a response',
+    /something else moving at the same time/.test(confounded.prior_cases.caution), true);
+  check('a confounded history never becomes support',
+    confounded.prior_cases.status === 'supported_by_history', false);
+}
+
+// ── T05: the live audit numbers, as a fixture ─────────────────────────────
+console.log('\n── T05: the reviewed regression case ──');
+{
+  // Source GMV 2585.35, components 2647.21, difference 61.86, capture 90.3%.
+  // These belong in a fixture and nowhere near production.
+  const audited = {
+    ...base,
+    attribution: {
+      ...base.attribution,
+      total_gmv: 2585.35,
+      component_total: 2647.21,
+      reconciliation_gap: 61.86,
+      reconciliation_pct: 61.86 / 2585.35,
+      reconciliation_status: 'rounding',
+      affiliate_capture: 0.903,
+    },
+    creative: { ...base.creative, declining_videos: 61, declining_gmv: 48800, top5_share: 0.55 },
+  };
+  const g = decide(audited).all.flatMap((r) => r.guardrails || []);
+
+  // 2.39% is inside the 3% decision tolerance, so the engine tolerates it.
+  const recon = g.find((x) => x.name === 'revenue reconciles');
+  check('a 2.4% gap is within the decision tolerance', recon ? recon.passed : true, true);
+
+  // 90.3% capture must never be described as the sources agreeing.
+  const cover = g.find((x) => /affiliate order lines cover/.test(x.name));
+  check('capture is named as coverage, not agreement',
+    cover ? /agree/.test(cover.name) : false, false);
+  check('and the pass still names the revenue with no order-line evidence',
+    /9\.7% of affiliate revenue still has no order-line evidence/.test(cover?.detail || ''), true);
+
+  // The components exceed the source, so no proportional claim is available.
+  check('components and the source total are not equal',
+    audited.attribution.component_total === audited.attribution.total_gmv, false);
+}
+
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

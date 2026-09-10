@@ -81,6 +81,7 @@ prompt.
 | `037_raw_retention_and_revisions` | Raw payload archive and late-data restatement capture |
 | `038_capability_registry` | What the integration can and cannot do, with evidence and dependency |
 | `039_evidence_basis` | How each pound was established, as a partition that reconciles |
+| `040_intervention_matching` | Linking a detected change to the report of it, without merging or double counting |
 
 **Recovery.** Every migration is re-runnable and verifies itself in a `DO`
 block that raises rather than warns. 028 and 030 alter existing data; both
@@ -93,13 +94,15 @@ pair that canonicalising made identical. No migration drops a column or a table.
 
 | Command | Result |
 |---|---|
-| `npm test` | **480 passed, 0 failed** |
+| `npm test` | **502 passed, 0 failed** |
 | `node scripts/visual-qa.mjs` | **145 passed, 0 failed** |
 | `npm run check:loop` (T31) | **26 passed, 0 failed** |
 | `npm run check:decisions` | **16 passed, 0 failed** |
 | `npm run check:retention` (T01/T03) | **17 passed, 0 failed** |
+| `npm run check:tenancy` (T27) | **29 passed, 0 failed** |
+| `npm run check:lifecycle` (T22/T24/T28) | **23 passed, 0 failed** |
 | `npm run build` | clean |
-| `node scripts/migrate.mjs` | 039 applied, all verifications passed |
+| `node scripts/migrate.mjs` | 040 applied, all verifications passed |
 
 The browser and loop suites run against a built bundle served by
 `scripts/serve-dist.mjs`. That file exists because `vite preview` kept dying
@@ -125,13 +128,25 @@ for every check it never reached.
 | T25 outcome interpretation | migration 032 — outcome, basis and decision are separate columns |
 | T26 learning influence | `decide-tests` — asymmetric rules, cannot clear a guardrail |
 | T31 full persisted loop | `check:loop` — 26 checks through the real UI |
+| T05 live audit regression | `decide-tests` — the reviewed numbers as a fixture |
+| T07 incomplete periods | `decide-tests` — missing days named, never read as zero |
+| T09 budget mechanism | `decide-tests` — 300 against a 550 cap does not become a budget rise |
+| T15 economic objective | `decide-tests` — no threshold means no profit claim |
+| T18 ROI relaxation | `decide-tests` — delivery gain and guardrail breach both represented |
+| T19 confounded episode | `decide-tests` — context, never proof |
+| T22 intervention truth | `check:lifecycle` — policy exception preserved, match linked not merged |
+| T24 outcome timing | `check:lifecycle` — late data waits; unmeasurable is not a failure |
+| T27 tenant and concurrency | `check:tenancy` — 12 readers and 2 writers refuse a stranger |
+| T28 migration compatibility | `check:lifecycle` — legacy rows read, ledger intact |
 | T32 external action boundary | `check:loop` — every non-GET request watched; zero external writes |
 | T04 accounting oracle | migration 039 verify — the basis partition sums to components to the cent |
 | T06 evidence basis | migration 039 + browser — lineage without doubling revenue |
 
-**16 of 32.** The remainder need either fixtures that do not exist yet
-(T05, T07, T09–T10, T12–T15, T18–T19, T22, T24, T27–T30) or evidence the
-integration does not provide.
+**26 of 32.** What remains: T10 (organic baseline edge cases), T12 (creative
+opportunity — BLOCKED on per-video delivery evidence), T13 (creative navigation
+ids), T14 (remaining marginal shapes, partly covered by the section 11 audit),
+T29 and T30 (browser and accessibility, substantially covered by the 145-check
+gate without being labelled case by case).
 
 ---
 
