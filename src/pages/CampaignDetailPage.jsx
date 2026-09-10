@@ -236,7 +236,7 @@ export default function CampaignDetailPage() {
       <div className="stack" id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
         <Boundary name={TABS.find((t) => t.id === tab)?.label} resetKey={`${tab}:${scope.start}:${scope.end}`}>
           {tab === 'performance' && <Performance facts={facts} cur={cur} scope={scope} />}
-          {tab === 'scenario' && <Scenario facts={facts} cur={cur} scope={scope} />}
+          {tab === 'scenario' && <Scenario facts={facts} cur={cur} scope={scope} decision={decision} onOpenDecision={() => setDrawer(true)} />}
           {tab === 'evidence' && <EvidenceTab decision={decision} facts={facts} />}
           {tab === 'history' && <History shop={shop} recs={recsQ.data} recsLoading={recsQ.isLoading} />}
         </Boundary>
@@ -392,7 +392,7 @@ function Performance({ facts, cur, scope }) {
  * budget change as a spend change one-for-one, and had no baseline to compare
  * against.
  */
-function Scenario({ facts, cur, scope }) {
+function Scenario({ facts, cur, scope, decision, onOpenDecision }) {
   const fits = [
     { key: 'shop', fit: facts.marginal, primary: true },
     { key: 'reported', fit: facts.marginalReported },
@@ -470,7 +470,7 @@ function Scenario({ facts, cur, scope }) {
             right={<span className="meta">training {scope.model.start} → {scope.model.end}</span>}
             bodyPad={false}
           >
-            <ScenarioTable fit={head} cur={cur} scope={scope} />
+            <ScenarioTable fit={head} cur={cur} scope={scope} decision={decision} onOpenDecision={onOpenDecision} />
           </Panel>
         </>
       )}
@@ -509,7 +509,7 @@ function Scenario({ facts, cur, scope }) {
 // is the whole point of the panel — a baseline is only honest if you can see
 // which dates it is NOT. Rendering without it threw `scope is not defined` and
 // took the entire app shell down with it.
-function ScenarioTable({ fit, cur, scope }) {
+function ScenarioTable({ fit, cur, scope, decision, onOpenDecision }) {
   const rows = fit.scenarios || [];
   if (!rows.length) return null;
   const anyBudget = rows.some((s) => s.implied_daily_budget != null);
@@ -575,6 +575,33 @@ function ScenarioTable({ fit, cur, scope }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* ── A SCENARIO IS NOT A PLAN ──────────────────────────────────────
+          The table models a change in DELIVERED SPEND. Nothing here says how
+          that spend would come about, and the two available levers are not
+          interchangeable: a budget is a cap that only binds if delivery is
+          reaching it, and a Target ROI is an auction bid that does not set
+          realised return. Turning a row into a plan requires naming the lever
+          and passing that lever's own gates — otherwise "+10% spend" silently
+          becomes "+10% budget", which is the substitution this panel exists to
+          prevent. The link goes to the recommendation, where the mechanism and
+          its gate results are stated and a decision can actually be recorded. */}
+      <div style={{ padding: 'var(--s4)', borderTop: '1px solid var(--divider)' }}>
+        <Notice tone="info">
+          <p style={{ margin: 0 }}>
+            These are <strong>spend</strong> scenarios, not a plan. To act on one you have to choose the
+            control that would produce that spend — a budget cap or a Target ROI bid — and that control
+            has its own evidence to satisfy. Neither is implied by a row in this table.
+            {decision?.primary && (
+              <>{' '}The current recommendation, with its mechanism and checks, is{' '}
+                <button className="btn btn-sm" onClick={onOpenDecision}>
+                  {actionLabel(decision.primary.action_code)}
+                </button>.
+              </>
+            )}
+          </p>
+        </Notice>
       </div>
 
       {/* The caveats are long and they are load-bearing, so they are one click

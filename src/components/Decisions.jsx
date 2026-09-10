@@ -159,6 +159,29 @@ export function RecommendationDrawer({ open, onClose, decision, shop, stored, ot
           <strong>Do:</strong> {p.action_text}
         </Notice>
 
+        {/* THE MECHANISM, between the proposal and the evidence.
+            A budget and a Target ROI were rendered identically — same card,
+            same arrow, different unit — so a cap and a bid read as the same
+            kind of change, and a modelled spend increase read as a promise
+            about a setting. What it acts on, what it should move, and what it
+            explicitly does NOT promise. The last line is the point. */}
+        {p.mechanism && (
+          <section>
+            <h3 className="section-title">What this changes</h3>
+            <dl className="dl" style={{ marginTop: 8 }}>
+              <dt>Acts on</dt>
+              <dd>{p.mechanism.acts_on}</dd>
+              <dt>Expected effect</dt>
+              <dd>{p.mechanism.expected_effect}</dd>
+              <dt>Where</dt>
+              <dd>{p.mechanism.where}</dd>
+            </dl>
+            <p className="meta" style={{ margin: '8px 0 0', maxWidth: '72ch' }}>
+              <strong>This does not claim</strong> {p.mechanism.cannot_claim}.
+            </p>
+          </section>
+        )}
+
         {p.evidence?.length > 0 && (
           <section>
             <h3 className="section-title">Evidence</h3>

@@ -5,7 +5,7 @@
 // with nothing deciding between them. These tests are weighted toward the cases
 // where an action must be SUPPRESSED — a pipeline that always finds something
 // to recommend is not arbitrating, it is just talking.
-import { decide, ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS } from '../src/lib/decide.js';
+import { decide, ACTION, OBJECTIVE, COOLDOWN_DAYS, BANDS, MECHANISM, CAPABILITY } from '../src/lib/decide.js';
 
 let pass = 0; let fail = 0;
 const check = (name, got, want) => {
@@ -372,6 +372,51 @@ console.log('\n── a missing day is caught even when the totals agree ──'
     .find((x) => x.name === 'every day of the report arrived');
   check('unchecked completeness is unavailable, not a pass', nd?.available, false);
 }
+
+// ── a budget cap and an auction bid are different things ───────────────────
+// They were the same object with a different value_unit, which is how a
+// modelled "+10% spend" reads as "+10% budget", and how a bid setting comes to
+// look like a promise about realised return.
+console.log('\n── interventions carry their mechanism, and what it cannot promise ──');
+{
+  const d = decide(base);
+  const all = [...d.all, ...(d.primary ? [d.primary] : [])];
+  const withMech = all.filter((r) => r.mechanism);
+  check('actions carry a mechanism', withMech.length > 0, true);
+  for (const r of withMech) {
+    check(`${r.action_code} says what it acts on`, !!r.mechanism.acts_on, true);
+    check(`${r.action_code} states what it cannot claim`, !!r.mechanism.cannot_claim, true);
+    check(`${r.action_code} says where the change is made`, !!r.mechanism.where, true);
+  }
+
+  // The distinction that matters: a cap is not a bid.
+  const budget = MECHANISM[ACTION.INCREASE_BUDGET];
+  const roi = MECHANISM[ACTION.DECREASE_TARGET_ROI];
+  check('a budget acts on a cap', /cap/i.test(budget.acts_on), true);
+  check('a Target ROI acts on a bid', /bid/i.test(roi.acts_on), true);
+  check('they do not act on the same thing', budget.acts_on === roi.acts_on, false);
+  check('the budget refuses to promise spend when the cap is not binding',
+    /binding|never reached/i.test(budget.cannot_claim), true);
+  check('the Target ROI refuses to promise a realised return',
+    /realised ROI/i.test(roi.cannot_claim), true);
+  check('and refuses to promise a proportional move',
+    /same percentage/i.test(roi.cannot_claim), true);
+  check('creative review refuses to quote a spend figure',
+    /per-video spend is not available/i.test(MECHANISM[ACTION.REVIEW_CREATIVE].cannot_claim), true);
+}
+
+// ── capability: "supported" is not reachable from reads alone ──────────────
+// The only definitive Creative Boost check Reacher offers is a create-shaped
+// call, and this product does not write to TikTok. So the app can determine
+// "unavailable" and "unknown"; "supported" needs a human to confirm it.
+console.log('\n── capability has three states, and one of them needs a human ──');
+{
+  check('unknown is a state', CAPABILITY.UNKNOWN, 'unknown');
+  check('unavailable is a state', CAPABILITY.UNAVAILABLE, 'unavailable');
+  check('supported is a state', CAPABILITY.SUPPORTED, 'supported');
+  check('they are three distinct values', new Set(Object.values(CAPABILITY)).size, 3);
+}
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

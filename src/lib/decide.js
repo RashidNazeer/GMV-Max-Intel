@@ -74,6 +74,79 @@ export const ACTION_LABEL = {
  *  action is visibly unlabelled rather than silently blank. */
 export const actionLabel = (code) => ACTION_LABEL[code] || code;
 
+/**
+ * WHAT AN INTERVENTION ACTS ON, AND WHAT IT CANNOT PROMISE.
+ *
+ * A budget change and a Target ROI change were the same object with a different
+ * `value_unit`, which is how a modelled "+10% spend" quietly reads as "+10%
+ * budget", and how a bid setting comes to look like a promise about realised
+ * return. They are different mechanisms:
+ *
+ *   * A BUDGET is a CAP. Raising it permits more spend; it does not create
+ *     demand. If delivery never reaches the cap, moving the cap changes
+ *     nothing — which is why the budget candidate is gated on evidence that
+ *     the budget is actually binding.
+ *   * A TARGET ROI is an AUCTION BID. Lowering it makes GMV Max bid harder and
+ *     may buy more delivery. It does NOT set the realised ROI, and a 5% change
+ *     in the setting does not imply a 5% change in the result. The spend
+ *     elasticity must never be applied to it.
+ *   * CREATIVE SUPPLY is neither: it changes what there is to deliver.
+ *
+ * `cannot_claim` is the load-bearing field. It is rendered, not decorative.
+ */
+export const MECHANISM = {
+  [ACTION.INCREASE_BUDGET]: {
+    acts_on: 'daily budget cap',
+    expected_effect: 'more delivered spend — but only if the cap was binding',
+    cannot_claim: 'that raising the cap raises spend when delivery never reached it',
+    where: 'TikTok Ads Manager · campaign daily budget',
+  },
+  [ACTION.DECREASE_BUDGET]: {
+    acts_on: 'daily budget cap',
+    expected_effect: 'less delivered spend',
+    cannot_claim: 'a proportional change in return',
+    where: 'TikTok Ads Manager · campaign daily budget',
+  },
+  [ACTION.DECREASE_TARGET_ROI]: {
+    acts_on: 'auction bid (the optimisation target)',
+    expected_effect: 'more delivery, at a lower efficiency target',
+    cannot_claim: 'that realised ROI will land on the new number, or move by the same percentage',
+    where: 'TikTok Ads Manager · GMV Max Target ROI',
+  },
+  [ACTION.INCREASE_TARGET_ROI]: {
+    acts_on: 'auction bid (the optimisation target)',
+    expected_effect: 'less delivery, at a higher efficiency target',
+    cannot_claim: 'that realised ROI will land on the new number',
+    where: 'TikTok Ads Manager · GMV Max Target ROI',
+  },
+  [ACTION.REVIEW_CREATIVE]: {
+    acts_on: 'creative supply',
+    expected_effect: 'depends on what the review finds',
+    cannot_claim: 'a spend or return figure — per-video spend is not available from the integration',
+    where: 'TikTok Shop · the videos themselves',
+  },
+  [ACTION.FIX_DATA]: {
+    acts_on: 'the evidence, not the account',
+    expected_effect: 'no change to delivery',
+    cannot_claim: 'any effect on performance',
+    where: 'Reacher · ingestion',
+  },
+};
+
+export const mechanismFor = (code) => MECHANISM[code] || null;
+
+/**
+ * Capability in three states — and only two are honestly reachable from here.
+ *
+ * Creative Boost cannot be confirmed SUPPORTED from read-only access: the only
+ * definitive check Reacher offers is a create-shaped call, and this product
+ * does not write to TikTok. So `unavailable` (something readable says no) and
+ * `unknown` (we cannot tell) are what the app can determine; `supported`
+ * requires an operator to confirm it in the platform and record when.
+ * A capability nobody verified must never render as a ready action.
+ */
+export const CAPABILITY = { SUPPORTED: 'supported', UNAVAILABLE: 'unavailable', UNKNOWN: 'unknown' };
+
 export const OBJECTIVE = { BALANCED: 'balanced', EFFICIENCY: 'efficiency', GMV_GROWTH: 'gmv_growth' };
 
 export const RULE_VERSION = '2026-09-08.1';
@@ -787,6 +860,10 @@ function shape(c, x, role, suppressedList) {
     change_abs: c.changeAbs ?? null,
     change_pct: c.changePct ?? null,
     value_unit: c.valueUnit ?? null,
+    // What this action ACTS ON, what it can be expected to move, and what it
+    // must not be read as promising. Carried on every recommendation so the
+    // drawer, the scenario table and a stored record all say the same thing.
+    mechanism: mechanismFor(c.action),
     test_days: c.testDays ?? null,
     revenue_affected: c.revenueAffected ?? null,
     // Three separate claims, kept separate.
