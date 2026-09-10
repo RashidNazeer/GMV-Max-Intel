@@ -115,5 +115,75 @@ console.log('\n── the score is inspectable ──');
     m.parts.filter((p) => p.available).every((p) => p.current != null && p.prior != null), true);
 }
 
+// ── T10: the organic edge cases that produce misleading numbers ──────────
+//
+// Missing prior data, a genuine zero baseline, sparse activity and a missing
+// score component. The requirement's own words: "Do not turn a missing prior
+// value into a 100% decline."
+console.log('\n── T10: organic baseline edge cases ──');
+{
+  const A = (organic, affiliate, orders) => ({
+    measured_organic_gmv: organic,
+    affiliate_video_ours_gmv: affiliate,
+    orders,
+  });
+  const C = (creators, newVideos, rising) => ({
+    creators, new_videos: newVideos, rising_videos: rising,
+  });
+
+  // MISSING PRIOR. No previous period at all — not a period that was empty.
+  const noPrior = momentum(
+    { attribution: A(5000, 1000, 40), creative: C(10, 5, 3) },
+    { attribution: null, creative: null },
+  );
+  check('a missing prior produces no score', noPrior.score, null);
+  check('and no component claims a change', noPrior.parts.every((p) => p.change == null), true);
+  check('coverage is reported as nothing usable', noPrior.coverage, 0);
+  // THE FAILURE THIS GUARDS. -1 would render as "down 100%" against a period
+  // that never existed.
+  check('nothing anywhere is a -100% change',
+    noPrior.parts.some((p) => p.change === -1), false);
+
+  // GENUINE ZERO BASELINE. Last period really was zero. "Up from nothing" is
+  // infinite, and rendering it as a huge positive would let one first sale read
+  // as explosive growth.
+  const fromZero = momentum(
+    { attribution: A(5000, 1000, 40), creative: C(10, 5, 3) },
+    { attribution: A(0, 0, 0), creative: C(0, 0, 0) },
+  );
+  const organic = fromZero.parts.find((p) => p.key === 'organic_gmv');
+  check('growth from a zero baseline has no percentage', organic.change, null);
+  check('the component is marked unavailable rather than zero', organic.available, false);
+  // Both raw values still travel, so a reader can see 5000 against 0 and judge.
+  check('but both raw values are still carried', [organic.current, organic.prior], [5000, 0]);
+  check('and the score refuses rather than reporting explosive growth', fromZero.score, null);
+
+  // SPARSE. Some components measurable, others absent. The score must
+  // renormalise over what it HAS and report how much weight that was.
+  const sparse = momentum(
+    { attribution: A(5000, 1200, 40), creative: C(null, null, null) },
+    { attribution: A(4000, 1000, 30), creative: C(null, null, null) },
+  );
+  check('a sparse period still scores from what exists', typeof sparse.score, 'number');
+  check('coverage says how much weight was usable', sparse.coverage > 0 && sparse.coverage < 1, true);
+  check('and the unavailable components are visible as unavailable',
+    sparse.parts.some((p) => !p.available), true);
+
+  // A DECLINE IS STILL A DECLINE. The guards must not swallow real bad news.
+  const falling = momentum(
+    { attribution: A(2000, 500, 15), creative: C(4, 1, 0) },
+    { attribution: A(6000, 1500, 45), creative: C(12, 8, 5) },
+  );
+  check('a genuine fall is reported as a fall', falling.score < 0, true);
+  check('and carries a label', typeof falling.label, 'string');
+
+  // NO OBSERVED TOTAL IS A COUNTERFACTUAL. The organic figure is what organic
+  // DID — never what it would have been without advertising.
+  check('nothing here claims a no-advertising counterfactual',
+    /counterfactual|without ads|without advertising/i.test(JSON.stringify(falling)), false);
+}
+
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

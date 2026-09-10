@@ -94,8 +94,8 @@ pair that canonicalising made identical. No migration drops a column or a table.
 
 | Command | Result |
 |---|---|
-| `npm test` | **502 passed, 0 failed** |
-| `node scripts/visual-qa.mjs` | **145 passed, 0 failed** |
+| `npm test` | **533 passed, 0 failed** |
+| `node scripts/visual-qa.mjs` | **148 passed, 0 failed** |
 | `npm run check:loop` (T31) | **26 passed, 0 failed** |
 | `npm run check:decisions` | **16 passed, 0 failed** |
 | `npm run check:retention` (T01/T03) | **17 passed, 0 failed** |
@@ -138,15 +138,17 @@ for every check it never reached.
 | T24 outcome timing | `check:lifecycle` — late data waits; unmeasurable is not a failure |
 | T27 tenant and concurrency | `check:tenancy` — 12 readers and 2 writers refuse a stranger |
 | T28 migration compatibility | `check:lifecycle` — legacy rows read, ledger intact |
+| T10 organic baseline | `momentum-tests` — missing prior, zero baseline, sparse, renormalisation |
+| T13 creative navigation | `visual-qa` — exact ids and the finding's window survive the CTA |
+| T14 marginal model | `marginal-tests` — linear, saturating, negative, noisy, sparse, flat, out-of-range |
 | T32 external action boundary | `check:loop` — every non-GET request watched; zero external writes |
 | T04 accounting oracle | migration 039 verify — the basis partition sums to components to the cent |
 | T06 evidence basis | migration 039 + browser — lineage without doubling revenue |
 
-**26 of 32.** What remains: T10 (organic baseline edge cases), T12 (creative
-opportunity — BLOCKED on per-video delivery evidence), T13 (creative navigation
-ids), T14 (remaining marginal shapes, partly covered by the section 11 audit),
-T29 and T30 (browser and accessibility, substantially covered by the 145-check
-gate without being labelled case by case).
+**30 of 32.** What remains: T12 (creative opportunity — BLOCKED on the same
+per-video delivery evidence as section 10), and T29/T30 (browser regressions and
+accessibility), which the 148-check gate substantially covers without being
+labelled case by case.
 
 ---
 

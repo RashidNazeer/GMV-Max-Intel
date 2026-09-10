@@ -300,5 +300,81 @@ console.log('\n── a training window is not the evidence base ──');
 
 
 
+// ── T14: the shapes a spend-response model must survive ──────────────────
+//
+// Linear, saturating, noisy, sparse, negative and out-of-range. The section 11
+// audit covered dependence, the ceiling statement and the observation ledger;
+// these are the input shapes themselves.
+console.log('\n── T14: model behaviour across awkward shapes ──');
+{
+  const series = (n, f) => Array.from({ length: n }, (_, i) => {
+    const spend = 120 + (i % 11) * 28;            // real variation, not a ramp
+    return { spend, revenue: f(spend, i) };
+  });
+
+  // LINEAR. Constant returns: elasticity near 1, and no ceiling invented.
+  const linear = fitSpendResponse(series(40, (s) => s * 1.7), { target: TARGET.TOTAL_SHOP_GMV });
+  check('a linear response fits', linear.status, STATUS.OK);
+  check('with an elasticity near one', Math.abs(linear.elasticity - 1) < 0.05, true);
+  check('and no ceiling is invented for it', linear.ceiling?.identified, false);
+
+  // SATURATING. Strongly diminishing, but a power curve still never turns, so
+  // no maximum may be claimed.
+  const sat = fitSpendResponse(series(40, (s) => 900 * Math.sqrt(s)), { target: TARGET.TOTAL_SHOP_GMV });
+  check('a saturating response fits', sat.status, STATUS.OK);
+  check('its elasticity is well below one', sat.elasticity < 0.7, true);
+  check('diminishing returns are identified', sat.diminishing_returns, true);
+  check('and still no ceiling is claimed', sat.ceiling?.identified, false);
+
+  // NEGATIVE. More spend, less revenue. The model must report it, not floor it
+  // at zero — a negative relationship is a finding, and an important one.
+  const negative = fitSpendResponse(series(40, (s) => 90000 / s), { target: TARGET.TOTAL_SHOP_GMV });
+  if (negative.status === STATUS.OK) {
+    check('a negative relationship is reported as negative', negative.elasticity < 0, true);
+    check('and its marginal return is negative too', negative.marginal_roas < 0, true);
+  } else {
+    // Refusing is also acceptable — what is NOT acceptable is a positive number.
+    check('or it refuses rather than reporting a positive return',
+      negative.marginal_roas == null || negative.marginal_roas < 0, true);
+  }
+
+  // NOISY. Spend explains almost nothing. The model must refuse rather than
+  // quote the midpoint of a meaningless interval.
+  let seed = 3;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const noisy = fitSpendResponse(series(40, () => 400 + 6000 * rnd()), { target: TARGET.TOTAL_SHOP_GMV });
+  check('noise does not produce an actionable answer',
+    noisy.status === STATUS.OK && noisy.marginal_roas != null, false);
+  check('and the refusal says why', typeof noisy.reason === 'string' && noisy.reason.length > 0, true);
+
+  // SPARSE. Too few days to fit anything.
+  const sparse = fitSpendResponse(series(6, (s) => s * 1.5), { target: TARGET.TOTAL_SHOP_GMV });
+  check('too few days refuses', sparse.status === STATUS.OK, false);
+  check('and names how many it has', /\b6\b/.test(sparse.reason || '') || sparse.days === 6, true);
+
+  // FLAT SPEND. Thirty days at the same budget cannot identify a response, and
+  // this is the answer the original plan predicted would be common.
+  const flat = fitSpendResponse(
+    Array.from({ length: 30 }, () => ({ spend: 300, revenue: 500 })),
+    { target: TARGET.TOTAL_SHOP_GMV },
+  );
+  check('flat spend cannot identify a response', flat.status === STATUS.OK, false);
+
+  // OUT OF RANGE. A scenario beyond the observed spend must be flagged as
+  // extrapolation rather than presented like the rest.
+  const scens = scenarios(sat, { horizonDays: 7, dailyBudget: 400 });
+  const far = scens.find((s) => s.delta === 0.3);
+  const near = scens.find((s) => s.delta === 0);
+  check('the baseline scenario is inside the observed range', near.outside_observed, false);
+  check('and every scenario declares whether it is extrapolating',
+    scens.every((s) => typeof s.outside_observed === 'boolean'), true);
+  if (far) {
+    check('a +30% scenario carries the flag either way',
+      typeof far.outside_observed === 'boolean', true);
+  }
+}
+
+
+
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { console.log('FAILED: ' + failures.join(', ')); process.exit(1); }

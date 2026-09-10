@@ -293,6 +293,27 @@ if (await drill.count()) {
   }
   const url = page.url();
   check('the affected ids travel in the URL', /[?&]ids=/.test(url));
+
+  // ── T13: the CTA must open the same set, not a similar-looking one ───────
+  // A finding that says 24 videos and hands the drill-down a recomputed top-N
+  // lands the operator on a list that does not match the number they clicked.
+  // That happened once: the count read status='declining' while the id set read
+  // declining PLUS fatigue_risk, so 25 became 19 on arrival.
+  const idsParam = new URL(url).searchParams.get('ids');
+  const ids = idsParam ? idsParam.split(',').filter(Boolean) : [];
+  check('the id set is carried explicitly, not recomputed at the destination',
+    ids.length > 0, `${ids.length} ids in the URL`);
+  if (claimed) {
+    check(`the id count in the URL matches the finding's claim (${claimed})`,
+      ids.length === claimed, `url carries ${ids.length}, button claimed ${claimed}`);
+  }
+  check('every id is distinct — a repeated id would inflate the count',
+    new Set(ids).size === ids.length, `${new Set(ids).size} distinct of ${ids.length}`);
+
+  // And the window travels too: the same ids over a different period are a
+  // different finding.
+  check('the evidence window travels with the ids',
+    /[?&](days|from|to)=/.test(url), url.split('?')[1]?.slice(0, 80));
 } else {
   console.log('  (no drill-down action on this shop/window — skipped)');
 }

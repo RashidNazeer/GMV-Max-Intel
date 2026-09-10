@@ -27,7 +27,16 @@ const value = (v, unit, cur) => {
 function drill(d, params) {
   if (!d?.drill_to) return null;
   const q = new URLSearchParams();
-  for (const k of ['shop', 'days', 'from', 'to']) if (params?.get(k)) q.set(k, params.get(k));
+  if (params?.get('shop')) q.set('shop', params.get('shop'));
+  // THE FINDING'S WINDOW, not the browser's. This copied whichever date
+  // params happened to be in the current URL, so a finding viewed on the
+  // default window arrived at the destination with no period attached — and
+  // the same ids over a different period are a different finding. Falling back
+  // to the current params keeps a hand-built link working.
+  const from = d.window_start || params?.get('from');
+  const to = d.window_end || params?.get('to');
+  if (from && to) { q.set('from', from); q.set('to', to); }
+  else if (params?.get('days')) q.set('days', params.get('days'));
   if (d.affected_ids?.length) q.set('ids', d.affected_ids.join(','));
   const n = d.affected_ids?.length;
   if (d.drill_to === 'creatives') return { to: `/creatives?${q}`, label: n ? `Review ${n} video${n === 1 ? '' : 's'}` : 'Review videos' };

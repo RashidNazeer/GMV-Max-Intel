@@ -1265,6 +1265,14 @@ function shape(c, x, role, suppressedList) {
     // Carried on the record rather than only in the prose, so a stored
     // recommendation can still be told apart from one whose number was
     // fabricated by a default band. null on actions that do not propose a value.
+    // THE FINDING'S OWN WINDOW, carried on the record.
+    // A drill-down link copied whichever date params happened to be in the
+    // current URL, so a finding viewed on a default window handed its ids to
+    // the destination with no period attached — and the same ids over a
+    // different period are a different finding. Now the window travels with
+    // them, because it is part of what the finding IS.
+    window_start: x.window?.start ?? null,
+    window_end: x.window?.end ?? null,
     candidate_basis: c.candidateBasis ?? null,
     // WHAT PRIOR EXPERIENCE SAYS ABOUT THIS ACTION, carried on the record so
     // the influence is visible rather than only felt in the ranking. A tool
